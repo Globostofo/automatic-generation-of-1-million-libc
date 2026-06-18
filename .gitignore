@@ -1,0 +1,6 @@
+toolchain/*
+!toolchain/.gitkeep
+variants/*
+!variants/.gitkeep
+results/*
+!results/.gitkeep
