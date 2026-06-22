@@ -9,8 +9,7 @@
 
 set -e
 
-BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MUSL_SRC="$BASE_DIR/deps/musl"
+source "$(dirname "$0")/config.sh"
 
 if [ "$#" -lt 2 ]
 then
@@ -21,40 +20,44 @@ fi
 
 VARIANT_ID="$1"
 CFLAGS="$2"
-PREFIX="$BASE_DIR/variants/${VARIANT_ID}"
-LOG="$BASE_DIR/results/${VARIANT_ID}.build.log"
-META="$BASE_DIR/results/${VARIANT_ID}.meta.txt"
+VARIANT_DIR="$VARIANTS_DIR/$VARIANT_ID"
+VARIANT_LIB_DIR="$VARIANT_DIR/lib"
+LOG="$RESULTS_DIR/${VARIANT_ID}.build.log"
+META="$RESULTS_DIR/${VARIANT_ID}.meta.txt"
 
-echo "=== Build variant ${VARIANT_ID}==="
-echo "    CFLAGS : ${CFLAGS}"
-echo "    Prefix : ${PREFIX}"
+echo "=== Building variant ${VARIANT_ID}==="
+echo "    CFLAGS    : ${CFLAGS}"
+echo "    Directory : ${VARIANT_DIR}"
 
-rm -rf "$PREFIX"
+rm -rf "$VARIANT_DIR"
 
-cd $MUSL_SRC
-make clean
+(
+    cd "$MUSL_DIR"
 
-echo "[1/3] Configure..."
-./configure \
-    --prefix="$PREFIX" \
-    --syslibdir="$PREFIX/lib" \
-    CFLAGS="$CFLAGS" \
-    >> "$LOG" 2>&1
+    echo "Cleaning musl..."
+    make clean > /dev/null 2>&1
 
-echo "[2/3] Build..."
-make -j$(nproc) >> "$LOG" 2>&1
+    echo "Configuring..."
+    ./configure \
+        --prefix="$VARIANT_DIR" \
+        --syslibdir="$VARIANT_DIR/lib" \
+        CFLAGS="$CFLAGS" \
+        >> "$LOG" 2>&1
 
-echo "[3/3] Install..."
-make install >> "$LOG" 2>&1
+    echo "Compiling..."
+    make -j$(nproc) >> "$LOG" 2>&1
 
-LIBC_SO="$PREFIX/lib/libc.so"
+    echo "Installing..."
+    make install >> "$LOG" 2>&1
+)
+
+LIBC_SO="$VARIANT_LIB_DIR/libc.so"
 if [ ! -f "$LIBC_SO" ]
 then
     echo "[ERROR] libc.so is missing after installation!"
     exit 1
 fi
 
-TIMESTAMP=$(date -Iseconds)
 SIZE=$(stat -c%s "$LIBC_SO")
 SHA256=$(sha256sum "$LIBC_SO" | awk '{print $1}')
 TEXT_SHA256=$(objcopy --only-section=.text "$LIBC_SO" /tmp/text_$$.bin 2> /dev/null \
@@ -62,7 +65,6 @@ TEXT_SHA256=$(objcopy --only-section=.text "$LIBC_SO" /tmp/text_$$.bin 2> /dev/n
 
 cat > "$META" << EOF
 variant_id  : ${VARIANT_ID}
-timestamp   : ${TIMESTAMP}
 cflags      : ${CFLAGS}
 libc_so     : ${LIBC_SO}
 size_bytes  : ${SIZE}
@@ -71,7 +73,7 @@ sha256_text : ${TEXT_SHA256}
 build_status: OK
 EOF
 
-echo "=== Variant ${VARIANT_ID} compiled successfully ==="
+echo "=== Variant ${VARIANT_ID} built successfully ==="
 echo "    SHA256 (.text) : ${TEXT_SHA256}"
 echo "    Taille         : ${SIZE} bytes"
 echo "    Meta           : ${META}"
