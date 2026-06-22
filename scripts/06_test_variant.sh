@@ -1,4 +1,11 @@
 #!/bin/bash
+# =============================================================================
+# Script   : 06_test_variant.sh
+# Author   : Romain CLEMENT <romain.clement2301@gmail.com>
+# Date     : 2026
+# Purpose  : Run libc-test unit tests against a given musl variant
+# Usage    : ./scripts/06_test_variant.sh <variant_id>
+# =============================================================================
 
 set -e
 

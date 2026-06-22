@@ -1,4 +1,11 @@
 #!/bin/bash
+# =============================================================================
+# Script   : 05_build_variant.sh
+# Author   : Romain CLEMENT <romain.clement2301@gmail.com>
+# Date     : 2026
+# Purpose  : Build a single musl variant with the given compilation flags
+# Usage    : ./scripts/05_build_variant.sh <variant_id> <cflags>
+# =============================================================================
 
 set -e
 
