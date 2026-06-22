@@ -40,15 +40,17 @@ rm -rf "$VARIANT_DIR"
     echo "Configuring..."
     ./configure \
         --prefix="$VARIANT_DIR" \
-        --syslibdir="$VARIANT_DIR/lib" \
+        --syslibdir="$VARIANT_LIB_DIR" \
         CFLAGS="$CFLAGS" \
         >> "$LOG" 2>&1
 
     echo "Compiling..."
-    make -j$(nproc) >> "$LOG" 2>&1
+    make -j$(nproc) lib/libc.so >> "$LOG" 2>&1
 
     echo "Installing..."
-    make install >> "$LOG" 2>&1
+    mkdir -p "$VARIANT_LIB_DIR"
+    cp "$MUSL_DIR/lib/libc.so" "$VARIANT_LIB_DIR"
+    ln -s libc.so "$VARIANT_LIB_DIR/ld-musl-x86_64.so.1"
 )
 
 LIBC_SO="$VARIANT_LIB_DIR/libc.so"
