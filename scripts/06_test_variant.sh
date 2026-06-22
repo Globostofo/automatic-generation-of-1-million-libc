@@ -9,7 +9,7 @@
 
 set -e
 
-BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(dirname "$0")/config.sh"
 
 if [ "$#" -lt 1 ]
 then
@@ -18,17 +18,17 @@ then
 fi
 
 VARIANT_ID="$1"
-PREFIX="$BASE_DIR/variants/${VARIANT_ID}"
-LIB_PATH="$PREFIX/lib"
-LIBC_SO="$LIB_PATH/libc.so"
-LINKER="$LIB_PATH/ld-musl-x86_64.so.1"
-LOG="$BASE_DIR/results/${VARIANT_ID}.test.log"
-LIBC_TEST_DIR="$BASE_DIR/deps/libc-test"
+VARIANT_DIR="$VARIANTS_DIR/$VARIANT_ID"
+VARIANT_LIB_DIR="$VARIANT_DIR/lib"
+LIBC_SO="$VARIANT_LIB_DIR/libc.so"
+LINKER="$VARIANT_LIB_DIR/ld-musl-x86_64.so.1"
+LOG="$RESULTS_DIR/${VARIANT_ID}.test.log"
+RESULTS_FILE="$RESULTS_DIR/${VARIANT_ID}.test.txt"
 
 log() { echo "$@" | tee -a "$LOG"; }
 
 > "$LOG"
-log "=== Tests variant ${VARIANT_ID} - $(date -Iseconds) ==="
+log "=== Tests variant ${VARIANT_ID} ==="
 log ""
 log "--- 1 : ELF File ---"
 
@@ -70,12 +70,7 @@ MISSING=()
 
 for sym in "${REQUIRED_SYMBOLS[@]}"
 do
-    if echo "$EXPORTED" | grep -qx "$sym"
-    then
-        :
-    else
-        MISSING+=("$sym")
-    fi
+    echo "$EXPORTED" | grep -qx "$sym" || MISSING+=("$sym")
 done
 
 EXPORTED_COUNT=$(echo "$EXPORTED" | wc -l)
@@ -91,25 +86,25 @@ fi
 log ""
 log "--- 3 : Functional tests ---"
 
-TEST_COUNT=0
-FAILED=()
-for exe in $(find "$LIBC_TEST_DIR/src" -name "*.exe" ! -name "*-static.exe" ! -name "runtest.exe")
+PASS=0
+FAIL=0
+> "$RESULTS_FILE"
+
+for exe in $(find "$TEST_DIR/src" -name "*.exe" ! -name "*-static.exe" ! -name "runtest.exe" | sort)
 do
     if file "$exe" | grep -q "dynamically linked"
     then
-        TEST_COUNT=$((TEST_COUNT + 1))
-        if ! $LINKER --library-path $LIB_PATH "$exe" > /dev/null 2>&1
+        if { ( ulimit -c 0; $LINKER --library-path "$VARIANT_LIB_DIR" "$exe" ) > /dev/null 2>&1; } 2> /dev/null
         then
-            FAILED+=($(basename "$exe"))
+            PASS=$((PASS+1))
+        else
+            echo "FAIL $exe" >> "$RESULTS_FILE"
+            FAIL=$((FAIL+1))
         fi
-    else
-        echo "SKIPPED $exe"
     fi
 done
 
-if [ ${#FAILED[@]} -eq 0 ]
-then
-    log "[PASS] Passed all the tests from libc-test ($TEST_COUNT/$TEST_COUNT)"
-else
-    log "[FAIL] Failed tests (${#FAILED[@]}) : ${FAILED[*]}"
-fi
+log "TOTAL $((PASS+FAIL))"
+log "PASS  $PASS"
+log "FAIL  $FAIL"
+log "Details in $(basename "$(dirname "$RESULTS_FILE")")/$(basename "$RESULTS_FILE")"
