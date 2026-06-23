@@ -4,7 +4,7 @@
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Generate musl libc variants by combining compilation flags
-# Usage    : ./scripts/06_run_campaign.sh
+# Usage    : ./scripts/06_run_campaign.sh [parallel_jobs]
 # =============================================================================
 
 set -e
@@ -29,6 +29,18 @@ F_FLAGS=(
     "-fstack-protector -fno-omit-frame-pointer"
 )
 
+if [ -z "$1" ]
+then
+    PARALLEL_JOBS=$(( $(nproc) / 2 ))
+elif [[ "$1" =~ ^[0-9]+$ ]]
+then
+    PARALLEL_JOBS="$1"
+else
+    echo "Invalid number of parallel jobs : $1"
+    exit 1
+fi
+echo "Running on $PARALLEL_JOBS parallel jobs"
+
 echo "=== Syncing musl sources ==="
 bash "$SCRIPTS_DIR/01_sync_dependencies.sh" musl
 
@@ -46,7 +58,6 @@ do
     done
 done
 
-PARALLEL_JOBS=$(( $(nproc) / 2 ))
 printf "%s\n" "${JOBS[@]}" | xargs -P$PARALLEL_JOBS -I{} bash -c '
     IFS="|" read -r SCRIPTS_DIR VARIANT_ID CFLAGS <<< "{}"
     bash "$SCRIPTS_DIR/05_build_variant.sh" "$VARIANT_ID" "$CFLAGS"
