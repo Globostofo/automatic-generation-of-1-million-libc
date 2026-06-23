@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# Script   : 08_test_campaign.sh
+# Script   : 21_test_campaign.sh
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Run tests on all musl variants
-# Usage    : ./scripts/08_test_campaign.sh
+# Usage    : ./scripts/21_test_campaign.sh [parallel_jobs]
 # =============================================================================
 
 set -e

@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# Script   : 06_run_campaign.sh
+# Script   : 11_build_campaign.sh
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Generate musl libc variants by combining compilation flags
-# Usage    : ./scripts/06_run_campaign.sh [parallel_jobs]
+# Usage    : ./scripts/11_build_campaign.sh [parallel_jobs]
 # =============================================================================
 
 set -e
