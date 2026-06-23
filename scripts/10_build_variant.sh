@@ -82,3 +82,6 @@ echo "=== Variant $VARIANT_ID built successfully ==="
 echo "    SHA256 (.text) : $TEXT_SHA256"
 echo "    Taille         : $SIZE bytes"
 echo "    Meta           : $META"
+
+rm -f "$LOG"
+echo "    Build log deleted"

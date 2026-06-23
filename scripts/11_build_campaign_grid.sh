@@ -1,10 +1,11 @@
 #!/bin/bash
 # =============================================================================
-# Script   : 11_build_campaign.sh
+# Script   : 11_build_campaign_grid.sh
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Generate musl libc variants by combining compilation flags
-# Usage    : ./scripts/11_build_campaign.sh [parallel_jobs]
+#            using a grid search strategy
+# Usage    : ./scripts/11_build_campaign_grid.sh [parallel_jobs]
 # =============================================================================
 
 set -e
@@ -14,19 +15,30 @@ source "$SCRIPTS_DIR/config.sh"
 
 O_LEVELS=("-O0" "-O1" "-O2" "-O3" "-Os" "-Og")
 
-F_FLAGS=(
+INLINE_FLAGS=(
     ""
     "-fno-inline"
+    "-fno-inline-functions"
+    "-finline-functions"
+)
+
+UNROLL_FLAGS=(
+    ""
     "-fno-unroll-loops"
-    "-fomit-frame-pointer"
+    "-funroll-loops"
+)
+
+FRAME_FLAGS=(
+    ""
     "-fno-omit-frame-pointer"
-    "-fstack-protector"
-    "-fstack-protector-strong"
-    "-fno-strict-aliasing"
-    "-ffunction-sections"
-    "-fdata-sections"
-    "-fno-inline -fno-unroll-loops"
-    "-fstack-protector -fno-omit-frame-pointer"
+)
+
+MARCH_FLAGS=(
+    ""
+    "-march=x86-64"
+    "-march=x86-64-v2"
+    "-march=x86-64-v3"
+    "-mtune=native"
 )
 
 if [ -z "$1" ]
@@ -49,14 +61,26 @@ JOBS=()
 
 for o in "${O_LEVELS[@]}"
 do
-    for f in "${F_FLAGS[@]}"
+    for inline in "${INLINE_FLAGS[@]}"
     do
-        [ -n "$f" ] &&  CFLAGS="$o $f" || CFLAGS="$o"
-        VARIANT_ID=$(printf "%04d" $I)
-        JOBS+=("$SCRIPTS_DIR|$VARIANT_ID|$CFLAGS")
-        I=$((I+1))
+        for unroll in "${UNROLL_FLAGS[@]}"
+        do
+            for frame in "${FRAME_FLAGS[@]}"
+            do
+                for march in "${MARCH_FLAGS[@]}"
+                do
+                    VARIANT_ID=$(printf "%04d" $I)
+                    CFLAGS=$(echo "$o $inline $unroll $frame $march" | tr -s ' ' | sed 's/^ //;s/ $//')
+                    JOBS+=("$SCRIPTS_DIR|$VARIANT_ID|$CFLAGS")
+                    I=$((I+1))
+                    echo $VARIANT_ID $CFLAGS
+                done
+            done
+        done
     done
 done
+
+echo "=== Generating $((I-1)) variants ==="
 
 printf "%s\n" "${JOBS[@]}" | xargs -P$PARALLEL_JOBS -I{} bash -c '
     IFS="|" read -r SCRIPTS_DIR VARIANT_ID CFLAGS <<< "{}"
