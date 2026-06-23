@@ -9,7 +9,8 @@
 
 set -e
 
-source "$(dirname "$0")/config.sh"
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPTS_DIR/config.sh"
 
 if [ "$#" -lt 1 ]
 then

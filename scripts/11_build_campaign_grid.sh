@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPTS_DIR=$(dirname "$0")
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
 
 O_LEVELS=("-O0" "-O1" "-O2" "-O3" "-Os" "-Og")

@@ -9,6 +9,9 @@
 
 set -e
 
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPTS_DIR/config.sh"
+
 CLEAN=false
 
 while [[ $# -gt 0 ]]
@@ -25,8 +28,6 @@ do
     esac
     shift
 done
-
-source "$(dirname "$0")/config.sh"
 
 if [ ! -f "$TOOLCHAIN_CC" ]
 then

@@ -9,7 +9,7 @@
 
 set -e
 
-SCRIPTS_DIR=$(dirname "$0")
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
 
 VARIANTS=$(ls -d "$VARIANTS_DIR"/[0-9]* 2> /dev/null | sort)
