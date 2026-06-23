@@ -60,7 +60,7 @@ done
 
 printf "%s\n" "${JOBS[@]}" | xargs -P$PARALLEL_JOBS -I{} bash -c '
     IFS="|" read -r SCRIPTS_DIR VARIANT_ID CFLAGS <<< "{}"
-    bash "$SCRIPTS_DIR/05_build_variant.sh" "$VARIANT_ID" "$CFLAGS"
+    bash "$SCRIPTS_DIR/10_build_variant.sh" "$VARIANT_ID" "$CFLAGS"
 '
 
 echo "=== Done : $((I-1)) variants generated ==="

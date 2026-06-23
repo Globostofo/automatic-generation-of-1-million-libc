@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# Script   : 21_test_campaign.sh
+# Script   : 22_test_campaign_parallel.sh
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Run tests on all musl variants
-# Usage    : ./scripts/21_test_campaign.sh [parallel_jobs]
+# Usage    : ./scripts/22_test_campaign_parallel.sh [parallel_jobs]
 # =============================================================================
 
 set -e
@@ -35,7 +35,7 @@ echo "=== Testing $(echo "$VARIANTS" | wc -l) variants ==="
 
 echo "$VARIANTS" | xargs -P$PARALLEL_JOBS -I {} bash -c '
     VARIANT_ID=$(basename "{}")
-    bash "'"$SCRIPTS_DIR"'/07_test_variant.sh" "$VARIANT_ID"
+    bash "'"$SCRIPTS_DIR"'/20_test_variant.sh" "$VARIANT_ID"
 '
 
 echo "=== Done ==="
