@@ -32,7 +32,7 @@ F_FLAGS=(
 if [ -z "$1" ]
 then
     PARALLEL_JOBS=$(( $(nproc) / 2 ))
-elif [[ "$1" =~ ^[0-9]+$ ]]
+elif [[ "$1" =~ ^[0-9]+$ && "$1" -gt 0 ]]
 then
     PARALLEL_JOBS="$1"
 else
