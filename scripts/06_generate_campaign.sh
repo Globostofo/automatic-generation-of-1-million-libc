@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# Script   : 07_run_campaign.sh
+# Script   : 06_run_campaign.sh
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Generate musl libc variants by combining compilation flags
-# Usage    : ./scripts/07_run_campaign.sh
+# Usage    : ./scripts/06_run_campaign.sh
 # =============================================================================
 
 set -e
@@ -29,23 +29,27 @@ F_FLAGS=(
     "-fstack-protector -fno-omit-frame-pointer"
 )
 
+echo "=== Syncing musl sources ==="
+bash "$SCRIPTS_DIR/01_sync_dependencies.sh" musl
+
 I=1
+JOBS=()
 
 for o in "${O_LEVELS[@]}"
 do
     for f in "${F_FLAGS[@]}"
     do
-        if [ -n "$f" ]
-        then
-            CFLAGS="$o $f"
-        else
-            CFLAGS="$o"
-        fi
+        [ -n "$f" ] &&  CFLAGS="$o $f" || CFLAGS="$o"
         VARIANT_ID=$(printf "%04d" $I)
-        bash "$SCRIPTS_DIR/05_build_variant.sh" "$VARIANT_ID" "$CFLAGS"
-#        bash "$SCRIPTS_DIR/06_test_variant.sh" "$VARIANT_ID"
+        JOBS+=("$SCRIPTS_DIR|$VARIANT_ID|$CFLAGS")
         I=$((I+1))
     done
 done
+
+PARALLEL_JOBS=$(( $(nproc) / 2 ))
+printf "%s\n" "${JOBS[@]}" | xargs -P$PARALLEL_JOBS -I{} bash -c '
+    IFS="|" read -r SCRIPTS_DIR VARIANT_ID CFLAGS <<< "{}"
+    bash "$SCRIPTS_DIR/05_build_variant.sh" "$VARIANT_ID" "$CFLAGS"
+'
 
 echo "=== Done : $((I-1)) variants generated ==="

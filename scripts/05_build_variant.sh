@@ -20,38 +20,41 @@ fi
 
 VARIANT_ID="$1"
 CFLAGS="$2"
+BUILD_DIR="$BASE_DIR/tmp/build_$VARIANT_ID"
 VARIANT_DIR="$VARIANTS_DIR/$VARIANT_ID"
 VARIANT_LIB_DIR="$VARIANT_DIR/lib"
-LOG="$RESULTS_DIR/${VARIANT_ID}.build.log"
-META="$RESULTS_DIR/${VARIANT_ID}.meta.txt"
+LOG="$RESULTS_DIR/$VARIANT_ID.build.log"
+META="$RESULTS_DIR/$VARIANT_ID.meta.txt"
 
-echo "=== Building variant ${VARIANT_ID}==="
-echo "    CFLAGS    : ${CFLAGS}"
-echo "    Directory : ${VARIANT_DIR}"
+echo "=== Building variant $VARIANT_ID ==="
+echo "    CFLAGS    : $CFLAGS"
+echo "    Build     : $BUILD_DIR"
+echo "    Directory : $VARIANT_DIR"
 
 rm -rf "$VARIANT_DIR"
+mkdir -p "$BUILD_DIR" "$VARIANT_LIB_DIR" "$RESULTS_DIR"
+
+cp -r "$MUSL_DIR/." "$BUILD_DIR/"
 
 (
-    cd "$MUSL_DIR"
+    cd "$BUILD_DIR"
 
-    echo "Cleaning musl..."
-    make clean > /dev/null 2>&1
-
-    echo "Configuring..."
+    echo "Configuring $VARIANT_ID..."
     ./configure \
         --prefix="$VARIANT_DIR" \
         --syslibdir="$VARIANT_LIB_DIR" \
         CFLAGS="$CFLAGS" \
         >> "$LOG" 2>&1
 
-    echo "Compiling..."
-    make -j$(nproc) lib/libc.so >> "$LOG" 2>&1
+    echo "Compiling $VARIANT_ID..."
+    make lib/libc.so >> "$LOG" 2>&1
 
-    echo "Installing..."
-    mkdir -p "$VARIANT_LIB_DIR"
-    cp "$MUSL_DIR/lib/libc.so" "$VARIANT_LIB_DIR"
+    echo "Installing $VARIANT_ID..."
+    cp "$BUILD_DIR/lib/libc.so" "$VARIANT_LIB_DIR"
     ln -s libc.so "$VARIANT_LIB_DIR/ld-musl-x86_64.so.1"
 )
+
+rm -rf "$BUILD_DIR"
 
 LIBC_SO="$VARIANT_LIB_DIR/libc.so"
 if [ ! -f "$LIBC_SO" ]
@@ -75,7 +78,7 @@ sha256_text : ${TEXT_SHA256}
 build_status: OK
 EOF
 
-echo "=== Variant ${VARIANT_ID} built successfully ==="
-echo "    SHA256 (.text) : ${TEXT_SHA256}"
-echo "    Taille         : ${SIZE} bytes"
-echo "    Meta           : ${META}"
+echo "=== Variant $VARIANT_ID built successfully ==="
+echo "    SHA256 (.text) : $TEXT_SHA256"
+echo "    Taille         : $SIZE bytes"
+echo "    Meta           : $META"
