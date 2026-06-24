@@ -4,14 +4,15 @@
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Compute pairwise Jaccard distances between variants
-# Usage    : ./scripts/32_jaccard_distances.py
+# Usage    : ./scripts/32_jaccard_distances.py [n]
 # =============================================================================
 
 import os
+import sys
 import numpy as np
 from tools import VARIANTS_DIR, RESULTS_DIR, get_variant_ids, extract_mnemonics, save_stats, save_heatmap, save_matrix
 
-N = 3
+N = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 
 
 def build_ngrams(mnemonics, n):
@@ -65,9 +66,9 @@ if __name__ == "__main__":
     matrix = compute_distance_matrix(variants)
 
     print("\n=== Saving results ===")
-    save_stats(matrix, variant_ids, os.path.join(RESULTS_DIR, "jaccard_stats.txt"), extra={"n-gram": N})
-    save_matrix(matrix, variant_ids, os.path.join(RESULTS_DIR, "jaccard_matrix.csv"))
+    save_stats(matrix, variant_ids, os.path.join(RESULTS_DIR, f"jaccard_n{N}_stats.txt"), extra={"n-gram": N})
+    save_matrix(matrix, variant_ids, os.path.join(RESULTS_DIR, f"jaccard_n{N}_matrix.csv"))
     save_heatmap(matrix, f"Pairwise Jaccard distances between musl variants (n={N})",
-                 "Jaccard distance", os.path.join(RESULTS_DIR, "jaccard_heatmap.png"))
+                 "Jaccard distance", os.path.join(RESULTS_DIR, f"jaccard_n{N}_heatmap.png"))
 
     print("\n=== Done ===")
