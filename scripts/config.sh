@@ -1,4 +1,10 @@
-#!/bin/bash
+# =============================================================================
+# Module   : config.sh
+# Author   : Romain CLEMENT <romain.clement2301@gmail.com>
+# Date     : 2026
+# Purpose  : Shared configuration and path variables for all scripts
+# Usage    : source scripts/config.sh
+# =============================================================================
 
 set -e
 
