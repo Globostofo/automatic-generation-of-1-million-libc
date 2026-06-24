@@ -28,10 +28,10 @@ do
     if [ -z "${SEEN_HASHES[$HASH]}" ]
     then
         SEEN_HASHES[$HASH]="$VARIANT_ID"
-        echo "KEEP    $VARIANT_ID [$CFLAGS]" | tee "$DEDUP_REPORT"
+        echo "KEEP    $VARIANT_ID [$CFLAGS]" | tee -a "$DEDUP_REPORT"
         KEPT=$((KEPT+1))
     else
-        echo "REMOVE  $VARIANT_ID [$CFLAGS] (duplicate of ${SEEN_HASHES[$HASH]})" | tee "$DEDUP_REPORT"
+        echo "REMOVE  $VARIANT_ID [$CFLAGS] (duplicate of ${SEEN_HASHES[$HASH]})" | tee -a "$DEDUP_REPORT"
         rm -rf "$VARIANTS_DIR/$VARIANT_ID"
         rm -f "$RESULTS_DIR/$VARIANT_ID".*
         REMOVED=$((REMOVED+1))
