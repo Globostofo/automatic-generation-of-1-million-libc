@@ -4,3 +4,6 @@ variants/*
 !variants/.gitkeep
 results/*
 !results/.gitkeep
+
+**/__pycache__/
+*.pyc
