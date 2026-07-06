@@ -92,6 +92,7 @@ toolchain/     reference musl toolchain (baseline)
 variants/      generated libc.so files, one per variant_id
 results/       logs, metadata, test results, distance matrices, plots
 scripts/       pipeline described above
+docs/          written reports and their images
 ```
 
 ## Typical pipeline
