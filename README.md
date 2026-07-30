@@ -22,7 +22,7 @@ with a grid of GCC compilation flags**. The pipeline covers:
 Results so far: 720 variants generated, 248 distinct after
 deduplication (many flag combinations produce the exact same binary).
 
-## Step 2: musl + layout randomization (in progress)
+## Step 2: musl + layout randomization
 
 Second generation axis, isolated from step 1's flags: **layout
 randomization** of the same musl codebase, with the optimization level fixed
@@ -32,9 +32,12 @@ to `-O2`. Two random levers are drawn together per variant:
 - function order and NOP padding gaps between functions (link-time, via a
   generated partial linker script), driven by a single random seed.
 
-This targets diversity that pure compiler flags can't reach (function layout,
-code positions) while staying semantically neutral. Results pending — see
-`docs/step2_report.md` once the campaign has run.
+Generation is factored (compile once per alignment combo, cheap relink per
+seed) to keep this affordable at scale. Results so far: 500 variants
+generated (50 combos × 10 seeds), **0% duplication** (vs. 65% for step 1's
+flags), 0 functional regressions. See `docs/step2_report.md` for the full
+analysis, including why this axis supplies near-unlimited volume while
+step 1's flags remain necessary for diversity depth.
 
 ## Requirements
 
