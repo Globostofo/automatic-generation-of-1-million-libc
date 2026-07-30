@@ -68,7 +68,7 @@ cp -r "$MUSL_DIR/." "$BUILD_DIR/"
 )
 
 echo "Enumerating .text.* sections for $VARIANT_ID..."
-OBJECTS=$(find "$BUILD_DIR/obj" -name "*.o")
+OBJECTS=$(find "$BUILD_DIR/obj" -name "*.lo")
 readelf -S --wide $OBJECTS 2> /dev/null \
     | grep -oP '\.text\.\S+' \
     | sort -u \
