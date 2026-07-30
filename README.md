@@ -29,8 +29,8 @@ randomization** of the same musl codebase, with the optimization level fixed
 to `-O2`. Two random levers are drawn together per variant:
 
 - alignment jitter (`-falign-functions/-loops/-jumps/-labels`, compile-time) ;
-- function order and NOP padding gaps between functions (link-time, via a
-  generated partial linker script), driven by a single random seed.
+- function order and zero-filled padding gaps between functions (link-time,
+  via a generated partial linker script), driven by a single random seed.
 
 Generation is factored (compile once per alignment combo, cheap relink per
 seed) to keep this affordable at scale. Results so far: 500 variants

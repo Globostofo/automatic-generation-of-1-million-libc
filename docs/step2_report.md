@@ -11,8 +11,8 @@ those 248 clustered almost entirely along the `-O` optimization level. Step 2
 tests a different axis on the same musl codebase, with `-O2` fixed so the
 measured diversity is attributable to this axis alone: **layout
 randomization** — alignment jitter (`-falign-functions/-loops/-jumps/-labels`)
-combined with a random function order and NOP padding gaps at link time,
-driven by a per-variant seed.
+combined with a random function order and zero-filled padding gaps at link
+time, driven by a per-variant seed.
 
 To make this affordable at scale, generation is factored: variants are drawn
 as `K` alignment combinations × `seeds_per_combo` seeds each, compiling musl

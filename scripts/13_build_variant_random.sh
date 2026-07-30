@@ -5,7 +5,7 @@
 # Date     : 2026
 # Purpose  : Build a single musl variant by relinking an already-compiled
 #            base build (see 12_build_base_random.sh) with a random function
-#            order and NOP padding gaps derived from a seed. Only the link
+#            order and zero-filled padding gaps derived from a seed. Only the link
 #            step is redone per variant; compilation is shared across every
 #            variant built from the same alignment combo.
 # Usage    : ./scripts/13_build_variant_random.sh <variant_id> <combo_id> <seed> [pad_min] [pad_max]
