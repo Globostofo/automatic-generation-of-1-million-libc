@@ -4,10 +4,15 @@
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Generate musl libc variants by sampling the layout randomization
-#            axis: draw K distinct alignment combinations, build each base
-#            once (12_build_base_random.sh), then draw `seeds_per_combo`
-#            random seeds per combo and relink each variant
-#            (13_build_variant_random.sh) without recompiling.
+#            axis: draw K distinct alignment combinations and `seeds_per_combo`
+#            random seeds per combo, then run one job per combo (parallel
+#            across combos, sequential within a combo) that builds the base
+#            once (12_build_base_random.sh) and relinks all its variants
+#            (13_build_variant_random.sh) without recompiling. Doing the base
+#            build and all its relinks in the same job removes the barrier
+#            between "build all bases" and "relink all variants": a combo
+#            that finishes compiling early starts relinking immediately
+#            instead of waiting for the slowest combo in the batch.
 # Usage    : ./scripts/14_build_campaign_random.sh [K] [seeds_per_combo] [parallel_jobs]
 # =============================================================================
 
@@ -57,7 +62,6 @@ echo "variant_id combo_id seed" > "$MANIFEST"
 
 declare -A SEEN_COMBOS
 COMBO_JOBS=()
-VARIANT_JOBS=()
 
 C=0
 while [ "$C" -lt "$K" ]
@@ -77,28 +81,29 @@ do
 
     COMBO_ID=$(printf "%03d" $C)
     echo "$COMBO_ID $AF $AL $AJ $ALB" >> "$COMBOS_MANIFEST"
-    COMBO_JOBS+=("$SCRIPTS_DIR|$COMBO_ID|$AF|$AL|$AJ|$ALB")
     echo "combo $COMBO_ID align=$AF/$AL/$AJ/$ALB"
 
+    SEED_LIST=""
     for (( S=1; S<=SEEDS_PER_COMBO; S++ ))
     do
         VARIANT_ID=$(printf "%04d" $(( (C-1) * SEEDS_PER_COMBO + S )))
         SEED=$(( (RANDOM << 16) ^ (RANDOM << 1) ^ RANDOM ))
         echo "$VARIANT_ID $COMBO_ID $SEED" >> "$MANIFEST"
-        VARIANT_JOBS+=("$SCRIPTS_DIR|$VARIANT_ID|$COMBO_ID|$SEED")
+        SEED_LIST="$SEED_LIST${SEED_LIST:+,}$VARIANT_ID:$SEED"
     done
+    COMBO_JOBS+=("$SCRIPTS_DIR|$COMBO_ID|$AF|$AL|$AJ|$ALB|$SEED_LIST")
 done
 
-echo "=== Building $K bases ==="
+echo "=== Building $K bases and relinking $N variants (one job per combo) ==="
 printf "%s\n" "${COMBO_JOBS[@]}" | xargs -P$PARALLEL_JOBS -I{} bash -c '
-    IFS="|" read -r SCRIPTS_DIR COMBO_ID AF AL AJ ALB <<< "{}"
+    IFS="|" read -r SCRIPTS_DIR COMBO_ID AF AL AJ ALB SEED_LIST <<< "{}"
     bash "$SCRIPTS_DIR/12_build_base_random.sh" "$COMBO_ID" "$AF" "$AL" "$AJ" "$ALB"
-'
-
-echo "=== Building $N variants ==="
-printf "%s\n" "${VARIANT_JOBS[@]}" | xargs -P$PARALLEL_JOBS -I{} bash -c '
-    IFS="|" read -r SCRIPTS_DIR VARIANT_ID COMBO_ID SEED <<< "{}"
-    bash "$SCRIPTS_DIR/13_build_variant_random.sh" "$VARIANT_ID" "$COMBO_ID" "$SEED"
+    IFS="," read -ra PAIRS <<< "$SEED_LIST"
+    for pair in "${PAIRS[@]}"
+    do
+        IFS=":" read -r VARIANT_ID SEED <<< "$pair"
+        bash "$SCRIPTS_DIR/13_build_variant_random.sh" "$VARIANT_ID" "$COMBO_ID" "$SEED"
+    done
 '
 
 echo "=== Done : $N variants generated across $K bases ==="
