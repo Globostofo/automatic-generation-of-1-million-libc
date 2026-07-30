@@ -69,9 +69,10 @@ check it passes `libc-test`. Serves as the comparison baseline for variants.
 |---|---|---|
 | `10_build_variant.sh` | Compiles a single `libc.so` variant with the given `CFLAGS`, installs it under `variants/<id>/`, computes size + SHA256 (full binary and `.text` section) into `results/<id>.meta.txt`. | `./scripts/10_build_variant.sh <variant_id> <cflags>` |
 | `11_build_campaign_grid.sh` | Generates a combinatorial grid of flags (optimization level × inlining × unrolling × frame pointer × march/mtune) and builds all variants in parallel via `10_build_variant.sh`. | `./scripts/11_build_campaign_grid.sh [parallel_jobs]` |
-| `12_build_campaign_random.sh` | Draws `N` random layout parameter sets (alignment values + a link-layout seed), writes `results/random_manifest.txt`, and builds them in parallel via `13_build_variant_random.sh`. | `./scripts/12_build_campaign_random.sh [N] [parallel_jobs]` |
-| `13_build_variant_random.sh` | Compiles a single `libc.so` variant with `-O2` and randomized alignment flags, then relinks it with a generated linker script that places `.text.*` sections in a random order with random padding gaps between them. Same `results/<id>.meta.txt` output as `10_build_variant.sh`, plus the drawn layout parameters. | `./scripts/13_build_variant_random.sh <variant_id> <align_functions> <align_loops> <align_jumps> <align_labels> <seed> [pad_min] [pad_max]` |
-| `gen_order_script.py` | Helper used by `13_build_variant_random.sh`: given a list of `.text.*` section names (stdin) and a seed, prints a partial linker script (`SECTIONS { .text : {...} } INSERT AFTER .text;`) with the sections in a random order and random padding gaps between them. Module, not meant to be run standalone. | `readelf -S --wide *.o \| grep -oP '\.text\.\S+' \| sort -u \| ./scripts/gen_order_script.py <seed> [pad_min] [pad_max]` |
+| `12_build_base_random.sh` | Compiles a "base" build of musl (`-O2` + a given alignment combo) and keeps it on disk under `tmp/base_<combo_id>/`, along with the list of `.text.*` sections found (`results/base_<combo_id>.sections.txt`). Compilation only depends on the alignment flags, so this is shared by every variant built from the same combo. | `./scripts/12_build_base_random.sh <combo_id> <align_functions> <align_loops> <align_jumps> <align_labels>` |
+| `13_build_variant_random.sh` | Relinks a single variant from an already-built base (see above): generates a linker script placing `.text.*` sections in a random order with random padding gaps (driven by a seed), relinks (guarded by a per-combo `flock` since several variants may share the same base concurrently), installs under `variants/<id>/`. Same `results/<id>.meta.txt` output as `10_build_variant.sh`, plus the alignment/seed parameters. | `./scripts/13_build_variant_random.sh <variant_id> <combo_id> <seed> [pad_min] [pad_max]` |
+| `14_build_campaign_random.sh` | Draws `K` distinct alignment combos and `seeds_per_combo` random seeds per combo, writes `results/random_combos_manifest.txt` and `results/random_manifest.txt`, builds the `K` bases in parallel via `12_build_base_random.sh`, then relinks all variants in parallel via `13_build_variant_random.sh`. | `./scripts/14_build_campaign_random.sh [K] [seeds_per_combo] [parallel_jobs]` |
+| `gen_order_script.py` | Helper used by `13_build_variant_random.sh`: given a list of `.text.*` section names (stdin) and a seed, prints a partial linker script (`SECTIONS { .text : {...} } INSERT AFTER .text;`) with the sections in a random order and random padding gaps between them. Module, not meant to be run standalone. | `readelf -S --wide *.lo \| grep -oP '\.text\.\S+' \| sort -u \| ./scripts/gen_order_script.py <seed> [pad_min] [pad_max]` |
 
 ### 2x — Variant testing
 
@@ -99,7 +100,7 @@ actual binary diversity.
 
 | Script | Role | Usage |
 |---|---|---|
-| `99_clean_variants.sh` | Removes `variants/` and `results/` (with confirmation). Preserves the toolchain and compiled test binaries. | `./scripts/99_clean_variants.sh` |
+| `99_clean_variants.sh` | Removes `variants/`, `results/` and any leftover `tmp/base_*` base builds (with confirmation). Preserves the toolchain and compiled test binaries. | `./scripts/99_clean_variants.sh` |
 
 ## Directory layout
 
@@ -129,13 +130,14 @@ docs/          written reports and their images
 ```
 
 Step 2 (layout randomization) reuses the same testing/dedup/distance scripts,
-swapping the generation step for `12_build_campaign_random.sh`. Since those
-scripts scan the whole `variants/`/`results/` directories, run
+swapping the generation step for `14_build_campaign_random.sh` (which itself
+drives `12_build_base_random.sh` and `13_build_variant_random.sh`). Since
+those scripts scan the whole `variants/`/`results/` directories, run
 `99_clean_variants.sh` first to avoid mixing axes:
 
 ```bash
 ./scripts/99_clean_variants.sh
-./scripts/12_build_campaign_random.sh   # generate variants (layout randomization)
+./scripts/14_build_campaign_random.sh   # generate variants (layout randomization)
 ./scripts/22_test_campaign_parallel.sh
 ./scripts/30_deduplicate_variants.sh
 
