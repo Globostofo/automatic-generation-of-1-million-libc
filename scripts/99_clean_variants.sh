@@ -32,3 +32,9 @@ do
         echo "$(basename "$dir")/ cleared"
     fi
 done
+
+if compgen -G "$BASE_DIR/tmp/base_*" > /dev/null
+then
+    rm -rf "$BASE_DIR"/tmp/base_*
+    echo "tmp/base_* (step 2 base builds) cleared"
+fi
