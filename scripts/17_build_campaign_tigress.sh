@@ -52,7 +52,10 @@ echo "variant_id seed" > "$MANIFEST"
 
 VARIANT_JOBS=()
 for (( I = 1; I <= N; I++ )); do
-    VARIANT_ID=$(printf "tigress_%04d" "$I")
+    # Plain zero-padded number, same as steps 1-2 -- 22_test_campaign_parallel.sh,
+    # 30_deduplicate_variants.sh and tools.py all only pick up variant
+    # directories whose name is purely numeric (`v.isdigit()`).
+    VARIANT_ID=$(printf "%04d" "$I")
     SEED=$(( (RANDOM << 16) ^ (RANDOM << 1) ^ RANDOM ))
     echo "$VARIANT_ID $SEED" >> "$MANIFEST"
     VARIANT_JOBS+=("$SCRIPTS_DIR|$VARIANT_ID|$SEED")
