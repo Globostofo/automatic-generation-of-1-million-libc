@@ -107,6 +107,18 @@ CACHE="$TIGRESS_BASE_CACHE/$SAFE"
 mkdir -p "$WORK"
 LOCK="$TIGRESS_TMP/.report.lock"
 
+# Deterministic, per-source-file prefix for Tigress's own internally
+# generated names (e.g. the stub main's argc/argv/envp holder globals,
+# _TIG_IZ_<random>_argc-style). Tigress runs as a SEPARATE process per file
+# here, each given the SAME --Seed= for a given variant -- if that seed
+# alone drives Tigress's "random" suffix, two *different* files can get the
+# *same* suffix for a given seed (observed: usleep.c and ftw.c both
+# generating _TIG_IZ_I27a_argc, a hard `multiple definition` link error).
+# --FilePrefix= namespaces those names by file instead of relying on the
+# seed to make them unique, closing this off deterministically regardless
+# of which seed is in play.
+FILE_PREFIX="tig_$(echo "$SRC" | tr -c 'A-Za-z0-9' '_')"
+
 log_result() {
     ( flock 9; echo "$1 $SRC $2" >> "$TIGRESS_REPORT" ) 9> "$LOCK"
 }
@@ -228,7 +240,7 @@ TRANSFORM_LIST="${TIGRESS_TRANSFORM:-Flatten,Split}"
 STAGE_IN="$WORK/src.fixed.i"
 STAGE_NUM=0
 if [ "${TIGRESS_USE_INIT_OPAQUE:-0}" = "1" ]; then
-    tigress $TIGRESS_EXTRA_ARGS --Seed="$TIGRESS_SEED" \
+    tigress $TIGRESS_EXTRA_ARGS --Seed="$TIGRESS_SEED" --FilePrefix="$FILE_PREFIX" \
         --Transform=InitOpaque --Functions=main --InitOpaqueStructs=list,array \
         --out="$WORK/src.stage0.c" "$WORK/src.fixed.i" \
         > "$WORK/tigress.log" 2>&1 \
@@ -243,7 +255,7 @@ IFS=',' read -ra STAGES <<< "$TRANSFORM_LIST"
 for t in "${STAGES[@]}"; do
     STAGE_NUM=$((STAGE_NUM + 1))
     STAGE_OUT="$WORK/src.stage${STAGE_NUM}.c"
-    tigress $TIGRESS_EXTRA_ARGS --Seed="$TIGRESS_SEED" --Transform="$t" --Functions="$FUNCS" \
+    tigress $TIGRESS_EXTRA_ARGS --Seed="$TIGRESS_SEED" --FilePrefix="$FILE_PREFIX" --Transform="$t" --Functions="$FUNCS" \
         --out="$STAGE_OUT" "$STAGE_IN" \
         >> "$WORK/tigress.log" 2>&1 \
         || fallback "tigress-failed"
