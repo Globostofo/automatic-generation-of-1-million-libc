@@ -129,6 +129,7 @@ check it passes `libc-test`. Serves as the comparison baseline for variants.
 | `20_test_variant.sh` | Validates a variant: ELF format, presence of the linker, required ABI symbols, then a full `libc-test` run. Writes failing tests to `results/<id>.test.txt`. | `./scripts/20_test_variant.sh <variant_id>` |
 | `21_test_campaign_linear.sh` | Runs `20_test_variant.sh` sequentially on all variants. | `./scripts/21_test_campaign_linear.sh` |
 | `22_test_campaign_parallel.sh` | Same, in parallel. | `./scripts/22_test_campaign_parallel.sh [parallel_jobs]` |
+| `23_aggregate_test_results.sh` | Aggregates `20_`'s per-variant `results/<id>.test.log`/`.test.txt` across a whole campaign: pass/fail count distribution (min/max/mean/std), any variant with an ELF/ABI-level failure (more serious than a functional test failure, listed separately), and a ranked failure-frequency table (`results/test_aggregate_failure_frequency.txt`) showing which individual `libc-test` executables fail across most variants (systemic) vs only a few (worth investigating). Useful once a campaign is too large to eyeball each variant's log individually. | `./scripts/23_aggregate_test_results.sh` |
 
 ### 3x — Post-processing
 
