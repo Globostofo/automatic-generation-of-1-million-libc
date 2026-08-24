@@ -149,16 +149,39 @@ run's numbers being the more reliable ones.
 
 ## 3. Analysis and limitations
 
+- **Tigress's real contribution here is depth, not volume — step 2 still
+  supplies the volume.** The headline "150 variants, 0% duplication"
+  number is not a step-3 achievement in its own right: it is step 2's
+  layout-randomization mechanism, reused unmodified, and `--Seed=`
+  applied to a fixed Tigress transform contributes nothing to it (see
+  `docs/step3_design.md` §6 — two combos even show *zero* functional-test
+  variance across all 30 of their layout seeds). What Tigress actually
+  adds is a small number of genuinely distinct code-structure "shapes" —
+  5, in the validated set — each of which step 2's mechanism can then be
+  layered under for volume. Comparing the three axes on the same metric
+  (Jaccard distance on assembly mnemonic 3-grams) makes the shape of this
+  contribution concrete: step 1's flags produce inter-cluster distances of
+  ~0.7–0.85, step 2's layout alone tops out at 0.32, and step 3's
+  transform combos land in between at a max of 0.59 (mean 0.38). Tigress
+  is a real depth lever, comparable in *kind* to step 1's flags (a small,
+  curated set of structurally distinct choices) rather than to step 2's
+  effectively unlimited seed space — but a shallower one than step 1, and
+  reached at substantially higher engineering cost (a whole-program
+  assumption to work around, four systematic correctness fixes, and most
+  of the transform catalog disqualified, unsafe, or deferred, see
+  `docs/step3_design.md` §5). **The practical implication for step 4**:
+  treat the obfuscation-combo choice like step 1's flag choice — a small,
+  curated depth lever — and keep relying on step 2's relink mechanism for
+  volume under whichever depth lever (or combination of levers) is
+  active, rather than expecting any future obfuscation transform to
+  supply volume on its own.
 - **Combo identity, not layout seed, is the dominant driver of measurable
-  diversity.** Every relevant result points the same way: `--Seed=`
-  applied to a fixed Tigress transform does not meaningfully change
-  compiled `.text` bytes (see `docs/step3_design.md` §6); the 5 transform
-  combos each form their own clean cluster at `n_clusters=5`; two combos
-  show zero functional-test variance across all 30 of their layout seeds.
-  Layout-seed diversity is real (it is what makes 0% duplication possible
-  at all) but shallow — it multiplies volume within a combo rather than
-  producing structurally distinct code, mirroring step 2's own finding
-  that layout randomization is a volume lever, not a depth lever.
+  diversity within this axis.** The 5 transform combos each form their
+  own clean cluster at `n_clusters=5`. Layout-seed diversity is real (it
+  is what makes 0% duplication possible at all) but shallow — it
+  multiplies volume within a combo rather than producing structurally
+  distinct code, mirroring step 2's own finding that layout randomization
+  is a volume lever, not a depth lever.
 - **Obfuscation coverage tops out around 86-88%, not 100%, for a
   structural reason, not a bug.** `memcpy`/`memset`/`memmove` and other
   hot-path string functions are hand-written x86-64 assembly on this
