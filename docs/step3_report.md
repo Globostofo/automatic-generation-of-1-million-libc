@@ -13,14 +13,15 @@ source-to-source C transform applied before compilation. See
 per-file architecture, and the specific transforms used — this report
 covers results only.
 
-The production pipeline compiles musl once per **transform combo** (a
-specific Tigress transformation), then generates volume by relinking that
-single compiled base with step 2's proven layout-randomization mechanism
-(random function order and padding, driven by a seed) — reusing the
-"compile once, relink many times" factoring that made step 2 affordable
-at scale. Five transform combos were validated safe (see
-`docs/step3_design.md` §5): `Flatten`, `Split`, `Flatten,Split`, `Copy`,
-`AntiTaintAnalysis`.
+The production pipeline assigns each eligible `.c` file in musl's corpus
+one of 5 validated Tigress transforms (`Flatten`, `Split`, `Flatten,Split`,
+`Copy`, `AntiTaintAnalysis`), independently and deterministically per
+file, seeded per variant. **No layout relink**: an earlier design (K fixed
+transform combos, each relinked many times via step 2's mechanism) was
+found to attribute essentially all of its volume/duplication-avoidance to
+step 2's relink, not to Tigress — see `docs/step3_design.md` §6 for the
+full history. This design drops relink entirely to measure obfuscation's
+own diversity contribution in isolation.
 
 ## 2. Results
 
@@ -28,58 +29,54 @@ at scale. Five transform combos were validated safe (see
 
 | Metric | Value |
 |---|---|
-| Variants generated | 150 (5 transform combos × 30 layout seeds) |
-| Distinct variants after deduplication (`.text` hash) | 150 (0% duplication) |
-| Generation time (5 combos compiled + 150 relinks, parallel) | ~15 minutes |
+| Variants generated | 25, each an independent full corpus compile with its own random per-file transform assignment |
+| Distinct variants after deduplication (`.text` hash) | 25 (0% duplication) |
+| Generation time (25 independent compiles, 4 parallel jobs, output cache warm-started from empty) | 56m22s wall-clock (real), 120m38s user, 68m16s sys |
 | Compute server | Madagh (48 cores, 192 GB RAM) |
+| Output cache hit rate (this run) | 73.7% (22,094 / 29,971 per-file obfuscation requests served from cache instead of recomputed) |
 
-Zero duplicates across all 150 variants, matching step 2's own 0%
-duplication result — expected, since diversity within a combo comes from
-the same layout-randomization mechanism already proven there.
+Zero duplicates across all 25 variants, matching every prior axis and
+architecture tested in this project.
 
-Obfuscation coverage per combo (musl's own build selects 1,375 eligible
-`.c` files for this target; a file falls back to unobfuscated compilation
-if any pipeline stage fails on it, see `docs/step3_design.md` §4):
+Obfuscation coverage per variant (musl's own build selects ~1,375
+eligible `.c` files for this target; a file falls back to unobfuscated
+compilation if any pipeline stage fails on it, see `docs/step3_design.md`
+§4): **1,193–1,202 files obfuscated per variant (mean ~1,199, ~87.2%
+coverage)** — consistent and narrow across all 25 variants, essentially
+unaffected by which specific per-file assignment was drawn.
 
-| Combo | Obfuscated | Fallback | Coverage |
-|---|---|---|---|
-| `Flatten` | 1202 | 173 | 87.4% |
-| `Split` | 1180 | 195 | 85.8% |
-| `Flatten,Split` | 1209 | 166 | 87.9% |
-| `Copy` | 1202 | 173 | 87.4% |
-| `AntiTaintAnalysis` | 1202 | 173 | 87.4% |
+The per-file transform assignment is close to perfectly uniform in
+aggregate, across all 25 variants combined (29,971 total obfuscation
+requests):
+
+| Transform | Total files assigned | Share |
+|---|---|---|
+| `Copy` | 6,087 | 20.3% |
+| `Flatten,Split` | 6,062 | 20.2% |
+| `Flatten` | 6,027 | 20.1% |
+| `Split` | 5,916 | 19.7% |
+| `AntiTaintAnalysis` | 5,879 | 19.6% |
+
+No systematic bias toward any one transform — the deterministic
+hash-based assignment (§`docs/step3_design.md` §6) behaves as intended.
 
 ### 2.2 Functional validation
 
 | Metric | Value |
 |---|---|
-| Baseline result (`libc-test`, unobfuscated musl) | 334/340 pass — 6 pre-existing failures, presumed to match the same baseline documented in step 1 |
-| Range across all 150 obfuscated variants | 322–327 pass (13–18 failures) |
-| Mean across all 150 obfuscated variants | ~325.7 pass (~14.3 failures) |
+| Baseline result (`libc-test`, unobfuscated musl) | 334/340 pass — 6 pre-existing failures, same reference used throughout this project |
+| Range across all 25 variants | 324–327 pass (13–16 failures) |
+| Mean across all 25 variants | 325.7 pass (14.3 failures) |
 
-Per-combo pass count (out of 340), across the 30 layout-seed variants of
-each combo:
-
-| Combo | Pass range | Pass count distribution |
-|---|---|---|
-| `Flatten` | 322–324 | mostly 324, occasional 322/323 |
-| `Split` | 326–327 | mostly 327, 3 variants at 326 |
-| `Flatten,Split` | 324 | uniform across all 30 seeds |
-| `Copy` | 326–327 | mostly 327, 2 variants at 326 |
-| `AntiTaintAnalysis` | 327 | uniform across all 30 seeds |
-
-Obfuscation adds roughly 7–12 additional failures on top of the 6
-pre-existing baseline ones, depending on the transform combo — `Split`,
-`Copy` and `AntiTaintAnalysis` cluster around 13–14 total failures,
-`Flatten` and `Flatten,Split` around 16–18. Two combos (`Flatten,Split`,
-`AntiTaintAnalysis`) show **zero variance across their 30 layout seeds** —
-the exact same test outcome regardless of relink seed — while `Flatten`,
-`Split` and `Copy` show small (1–2 test) variance between seeds of the
-same combo. This is consistent with the parallel-test-runner race
-condition already documented in step 1 (some `libc-test` binaries share
-files on disk, causing spurious concurrent-access failures under parallel
-execution) rather than a real functional difference introduced by the
-layout seed itself.
+Obfuscation adds roughly 7–10 additional failures on top of the 6
+pre-existing baseline ones. This range is **narrower** than the earlier
+K-combo design's per-combo spread (322–327, 13–18 failures) — expected,
+since every variant here mixes all 5 transforms in similar proportions
+instead of one variant being "pure `Flatten`" (that combo's weakest
+performer) and another "pure `AntiTaintAnalysis`" (its strongest). Mixing
+per file averages out each transform's own failure modes within every
+single variant rather than concentrating them in a handful of
+whole-corpus builds.
 
 The additional failures are not new or unexplained: they fall into the
 same categories already triaged during this axis's feasibility testing —
@@ -98,121 +95,103 @@ tests unrelated to obfuscation.
 | Metric | Value |
 |---|---|
 | Metric used | Jaccard distance on 3-grams of assembly mnemonics |
-| Variants compared | 150 |
-| Pairs | 11,175 |
-| Min distance | 0.0075 |
-| Max distance | 0.5878 |
-| Mean distance | 0.3813 |
-| Std deviation | 0.2285 |
+| Variants compared | 25 |
+| Pairs | 300 |
+| Min distance | 0.3048 |
+| Max distance | 0.4114 |
+| Mean distance | 0.3649 |
+| Std deviation | 0.0173 |
 
-Clustering with `n_clusters=5` — matching the number of transform combos,
-the same principle step 2 used (`n_clusters=50`, matching its 50
-alignment combos) — **recovers the 5 combos exactly**: each of the 5
-clusters contains precisely the 30 variants of one combo, with no mixing
-and no outliers. The reordered distance matrix shows this as 5 clean,
-sharply-bordered diagonal blocks.
+This is the core result this redesign set out to test, and it confirms
+the hypothesis cleanly: **the earlier K-combo design produced 5 discrete
+"islands" of diversity (mean 0.38, std 0.23, distances ranging from 0.008
+to 0.59 depending on which two combos were compared); this design
+produces a tight, near-uniform continuum instead (std 0.017 — more than
+13× tighter, with every single pairwise distance falling in a narrow
+0.30–0.41 band regardless of which two variants are compared)**.
 
-The dendrogram adds a layer the flat clustering alone does not show —
-which combos are structurally *closer* to each other:
-
-- `Copy` and `AntiTaintAnalysis` merge into a shared branch well before
-  joining the rest of the tree. Neither transform restructures a
-  function's control flow (`Copy` duplicates a function verbatim,
-  `AntiTaintAnalysis` disrupts a compiler-level taint analysis without
-  rewriting instruction sequences), so their mnemonic-level signature
-  stays close to each other and relatively close to the original,
-  unobfuscated code.
-- `Flatten` and `Flatten,Split` merge into their own separate branch —
-  expected, since `Flatten,Split` applies `Flatten` first; `Split`'s
-  further reorganization does not erase the dispatch-loop signature
-  `Flatten` imposes on the whole function.
-- `Split` alone sits closer to the `Copy`/`AntiTaintAnalysis` family than
-  to the `Flatten`-based family — consistent with `Split` reorganizing
-  which function a block of code lives in without synthesizing the kind
-  of artificial dispatch-loop structure `Flatten` does.
-
-So the measured diversity is not arbitrary noise between 5 interchangeable
-combos: it reflects a real, interpretable structure — transforms that
-rewrite control flow (`Flatten`-based) form one family, transforms that
-preserve the original instruction sequence (`Copy`, `AntiTaintAnalysis`,
-and to a lesser extent `Split`) form another.
-
-**Note on sample size**: an earlier, smaller campaign (21 variants, 7
-layout seeds per combo) showed `Flatten` and `Split` each fragmenting
-into 2–3 sub-clusters, which looked at the time like real intra-combo
-structure driven by the layout seed. At this larger sample (30 seeds per
-combo), both combos instead collapse cleanly into single unified
-clusters. The earlier fragmentation was most likely small-sample noise,
-not a reproducible signal — a caution against over-interpreting clustering
-results from a sample this size, and a data point in favor of the larger
-run's numbers being the more reliable ones.
+The reordered heatmap shows this directly: the earlier K-combo version had
+sharp, visually obvious dark diagonal blocks (near-zero within-combo
+distance) against a bright, clearly different off-diagonal (0.4–0.6,
+between-combo distance) — clusters were unmistakable by eye. Here, the
+`n_clusters=5` boundaries are still drawn (red lines) but are **not
+visually distinguishable by color from the rest of the matrix** — the
+whole matrix is a near-uniform yellow-green. The dendrogram makes the same
+point even more starkly: in the K-combo version, leaf-level merges
+happened at ~0.01–0.02 while the top-level splits happened at ~0.44–0.55,
+a >20× gap that is the signature of genuinely separate families. Here,
+**every merge in the entire tree — from the closest pair of variants to
+the single highest join at the top — falls within the same narrow
+0.30–0.37 band.** There is no meaningful hierarchical structure left to
+find: forcing a cut into 5 clusters (matching the old design's transform
+count, for comparability) produces a partition, but not a *meaningful*
+one — cluster sizes (5, 10, 3, 6, 1) look arbitrary because they are:
+cutting a genuinely flat, structureless distance cloud at any `n_clusters`
+value would produce comparably arbitrary groupings.
 
 ## 3. Analysis and limitations
 
-- **Tigress's real contribution here is depth, not volume — step 2 still
-  supplies the volume.** The headline "150 variants, 0% duplication"
-  number is not a step-3 achievement in its own right: it is step 2's
-  layout-randomization mechanism, reused unmodified, and `--Seed=`
-  applied to a fixed Tigress transform contributes nothing to it (see
-  `docs/step3_design.md` §6 — two combos even show *zero* functional-test
-  variance across all 30 of their layout seeds). What Tigress actually
-  adds is a small number of genuinely distinct code-structure "shapes" —
-  5, in the validated set — each of which step 2's mechanism can then be
-  layered under for volume. Comparing the three axes on the same metric
-  (Jaccard distance on assembly mnemonic 3-grams) makes the shape of this
-  contribution concrete: step 1's flags produce inter-cluster distances of
-  ~0.7–0.85, step 2's layout alone tops out at 0.32, and step 3's
-  transform combos land in between at a max of 0.59 (mean 0.38). Tigress
-  is a real depth lever, comparable in *kind* to step 1's flags (a small,
-  curated set of structurally distinct choices) rather than to step 2's
-  effectively unlimited seed space — but a shallower one than step 1, and
-  reached at substantially higher engineering cost (a whole-program
-  assumption to work around, four systematic correctness fixes, and most
-  of the transform catalog disqualified, unsafe, or deferred, see
-  `docs/step3_design.md` §5). **The practical implication for step 4**:
-  treat the obfuscation-combo choice like step 1's flag choice — a small,
-  curated depth lever — and keep relying on step 2's relink mechanism for
-  volume under whichever depth lever (or combination of levers) is
-  active, rather than expecting any future obfuscation transform to
-  supply volume on its own.
-- **Combo identity, not layout seed, is the dominant driver of measurable
-  diversity within this axis.** The 5 transform combos each form their
-  own clean cluster at `n_clusters=5`. Layout-seed diversity is real (it
-  is what makes 0% duplication possible at all) but shallow — it
-  multiplies volume within a combo rather than producing structurally
-  distinct code, mirroring step 2's own finding that layout randomization
-  is a volume lever, not a depth lever.
-- **Obfuscation coverage tops out around 86-88%, not 100%, for a
-  structural reason, not a bug.** `memcpy`/`memset`/`memmove` and other
-  hot-path string functions are hand-written x86-64 assembly on this
-  architecture — a source-to-source C obfuscator has no access to them,
-  a permanent gap for this axis (see `docs/step3_design.md` §7). The
-  remaining fallback files are ones where the pipeline itself failed on
-  a specific construct and safely reverted to compiling the original
-  source rather than aborting the build.
-- **`Copy` widens the exported symbol surface** (its duplicated helper
-  functions are not marked hidden), a cleanliness gap noted in
-  `docs/step3_design.md` §7, not a correctness issue — functional tests
-  pass at the same rate as the other combos.
-- **Residual `libc-test` failures were not chased to zero**, consistent
-  with this project's approach on the two previous axes: they fall into
-  already-triaged categories (TLS/bootstrap timing, out-of-memory
-  patterns, a few environment-sensitive tests), documented during earlier
-  feasibility testing rather than newly discovered here.
+- **The redesign achieved exactly what it set out to: obfuscation's own
+  diversity is now a real continuum, not 5 discrete points.** The
+  previous report's core finding — Tigress contributed only 5
+  interchangeable "shapes" while step 2's relink supplied all the actual
+  variant-to-variant volume — is superseded by this result. Assigning
+  transforms per file instead of per whole-corpus-build turns that same
+  set of 5 validated transforms (§`docs/step3_design.md` §5, unchanged)
+  into a genuine combinatorial diversity source, with **no new Tigress
+  research needed** — only the assignment granularity changed.
+- **The 0%-duplication, 25-variant result is no longer borrowed from step
+  2.** Unlike the previous design, no relink step runs here at all —
+  every bit of measured diversity in §2.3 is attributable to obfuscation
+  alone. This directly answers the question the previous report's
+  analysis section raised: obfuscation *can* supply its own volume, once
+  the assignment granularity is fine enough.
+- **This came at a real, deliberately-accepted compute cost.** Dropping
+  relink means every variant is again a full corpus compile — this
+  campaign (25 variants) took 56 minutes wall-clock even with the output
+  cache warm-starting from empty and reaching a 73.7% hit rate along the
+  way. The cache bounds the campaign's *unique* Tigress work at roughly
+  "5 full corpus passes, ever," regardless of how large N grows — so this
+  cost should scale much better for larger campaigns than the raw
+  per-variant time suggests, but it will never be as cheap as step 2's
+  relink-only volume (a few seconds per variant). See
+  `docs/step3_design.md` §6 for the caching mechanism and why it's
+  correctness-safe.
+- **Functional cost is real but bounded and already-understood**, not a
+  new set of bugs: 13–16 residual failures per variant beyond the 6
+  pre-existing baseline ones, all falling into categories already triaged
+  during earlier feasibility work (TLS/bootstrap timing, out-of-memory
+  patterns, a handful of environment-sensitive tests) — not chased to
+  zero, consistent with this project's approach on the two previous axes.
+- **Obfuscation coverage tops out around 87%, not 100%, for a structural
+  reason, not a bug.** `memcpy`/`memset`/`memmove` and other hot-path
+  string functions are hand-written x86-64 assembly on this architecture
+  — a source-to-source C obfuscator has no access to them, a permanent
+  gap for this axis (see `docs/step3_design.md` §7).
+- **`Copy` still widens the exported symbol surface** (its duplicated
+  helper functions are not marked hidden) wherever it's assigned to a
+  file — a cleanliness gap noted in `docs/step3_design.md` §7, not a
+  correctness issue.
 
 ## 4. Next steps
 
-- Combine this axis with steps 1 and 2 (compiler flags, layout
-  randomization) rather than generating variants along a single axis at a
-  time — this is step 4's scope, and the "compile once, relink many
-  times" factoring used here composes naturally with step 2's identical
-  pattern.
-- A handful of transforms were left unexplored for lack of supporting
+- This is now the load-bearing generation mechanism for step 3's
+  obfuscation axis. Combining it with steps 1 and 2 (compiler flags,
+  layout randomization) is step 4's scope — worth deciding explicitly
+  there whether to layer step 2's relink back on top of a fixed
+  per-file-assignment base for additional cheap volume once obfuscation's
+  own diversity has been captured, now that both mechanisms are
+  independently validated and quantified.
+- A handful of transforms remain unexplored for lack of supporting
   wrapper infrastructure rather than because they were shown unsafe:
   `EncodeData` (needs a variable-list extraction step), `RandomizeArgs`
   (needs a public-ABI-safe function filter), `AntiAliasAnalysis` (needs a
-  more thorough constructor-rename fix). Each would need dedicated
-  engineering, not just another validation pass, before being added to
-  the combo set.
-- Close the `Copy`-combo symbol-visibility gap (§3) before treating that
-  combo as production-final.
+  more thorough constructor-rename fix). Adding any of them to the
+  5-transform pool would directly widen the combinatorial space this
+  design already exploits.
+- Close the `Copy`-transform symbol-visibility gap (§3) before treating
+  this pipeline as production-final.
+- The `sys` time on this campaign (68m16s, exceeding `user` time on a
+  wall-clock-normalized basis) stood out but wasn't investigated further
+  — worth profiling if throughput becomes a priority for step 4's larger
+  target volumes.

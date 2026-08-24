@@ -117,7 +117,7 @@ Any file where the pipeline fails at any stage (compilation, Tigress
 itself, or a post-processing step) falls back to compiling the original,
 unobfuscated source rather than aborting the whole build — this is what
 lets a full-corpus build complete unattended, at the cost of leaving a
-minority of files unobfuscated (quantified per combo in the report).
+minority of files unobfuscated (quantified in the report).
 
 ## 5. Transform selection
 
@@ -159,38 +159,79 @@ each for a distinct, concrete reason rather than by category:
 | `RandomizeArgs` | Not attempted | Changing a function's signature is safe only for internal (`static`/`hidden`) functions — applying it to a public ABI function would break musl's API. Requires a new function-list filter in the wrapper (real engineering, not yet built). |
 | `Merge` | Not attempted | Suspected of the same cross-call-site visibility problem as `Inline` (Tigress's own documentation shows it normally operating across multiple merged files); also showed an unexplained `MISSING-MAIN` anomaly during early exploration. Not tested with full rigor. |
 
-## 6. Diversity mechanism: transform combos × layout relink, not per-variant re-obfuscation
+## 6. Diversity mechanism: per-file random transform assignment
 
-The first working pipeline design re-obfuscated musl from scratch for
-every variant, using Tigress's own `--Seed=` option to vary the output
-per variant. This was found to be a false premise: comparing the
-disassembly of the same file obfuscated twice with `Flatten`+`Split` under
-two different seeds showed **every instruction and operand identical** —
-only Tigress's internally-generated symbol *names* differed, which do not
-affect the compiled `.text` bytes at all. A full 20-variant campaign built
-this way came back as 19 exact duplicates of the first variant under
-`.text`-hash deduplication, confirming the disassembly finding at scale.
+This went through two prior designs before arriving at the current one,
+each ruled out by a concrete finding rather than by preference.
 
-The production design instead separates two concerns, mirroring step 2's
-own architecture:
+**Design 1 — re-obfuscate per variant with a new `--Seed=`.** The first
+working pipeline re-obfuscated musl from scratch for every variant, using
+Tigress's own `--Seed=` option to vary the output. This was a false
+premise: comparing the disassembly of the same file obfuscated twice with
+`Flatten,Split` under two different seeds showed **every instruction and
+operand identical** — only Tigress's internally-generated symbol *names*
+differed, which do not affect compiled `.text` bytes at all. A full
+20-variant campaign built this way came back as 19 exact duplicates of the
+first variant under `.text`-hash deduplication, confirming the finding at
+scale.
 
-- **Which combination of Tigress transforms is applied** (§5's 5 validated
-  combos) is the axis that produces genuinely different compiled code —
-  confirmed by the clustering results in the report, where each combo
-  forms its own distinguishable cluster.
-- **Volume within a fixed combo** comes from step 2's already-proven
-  layout-randomization mechanism (random function order and padding at
-  link time, 0% duplication measured there) — cheap to apply because
-  it only touches the link step, reusing objects that were compiled
-  (and obfuscated) once.
+**Design 2 — K fixed transform combos × step 2's layout relink.** Compile
+one obfuscated base per combo (§5's 5 validated transforms/combinations),
+kept on disk, then generate volume within each combo by relinking that
+base with step 2's proven layout-randomization mechanism (random function
+order and padding, 0% duplication there) — the same "compile once, relink
+many times" factoring step 2 uses. This worked, and a full campaign (150
+variants, 5 combos × 30 layout seeds) produced 0% duplication with a
+measurable, interpretable diversity structure between combos. But
+comparing this axis's own Jaccard-distance numbers against step 1's and
+step 2's on the same metric showed the volume/duplication-avoidance was
+step 2's relink mechanism doing the work — Tigress's own contribution was
+only 5 discrete "shapes" (one per combo), with `--Seed=` on top adding
+nothing. Two of the five combos even showed **zero** functional-test
+variance across all 30 of their layout seeds, underlining how shallow the
+relink-driven variation was compared to the combo choice itself.
 
-Concretely: one obfuscated base is compiled per transform combo and kept
-on disk; every additional variant of that combo is produced by relinking
-the same compiled objects with a new random layout seed, rather than
-re-running Tigress. This is the same "compile once, relink many times"
-factoring step 2 used to make its own axis affordable at scale, applied
-here to decouple the expensive part (Tigress) from the part that needs to
-scale to large variant counts (relinking).
+**Design 3 (current) — per-file random transform assignment.** Rather
+than pick one fixed combo for an entire corpus build, each eligible `.c`
+file independently gets one of the 5 validated transforms, chosen
+deterministically from a hash of `(assignment_seed, file path)`. A given
+variant is defined by its `assignment_seed` alone — no relink step
+follows. This is a deliberate methodological choice, not an oversight:
+the explicit goal of this design was to measure obfuscation's own
+diversity contribution in isolation, so step 2's mechanism is dropped
+entirely rather than layered on top, which would have muddied which axis
+any measured diversity came from.
+
+This turns Tigress's own contribution from 5 fixed points into a real
+combinatorial space (5 raised to the eligible-file-count power), without
+any new Tigress research — every ingredient (each of the 5 transforms
+applied to each file) was already individually validated safe in §5, only
+the *assignment granularity* changes, from "whole corpus" to "per file".
+Mixing different transforms within one linked binary was validated safe
+before committing to a full campaign: an 8-file sample with 4 different
+transforms assigned across it compiled cleanly, kept every correctness
+marker from §4 intact, and partial-linked together with zero symbol
+clashes.
+
+**Cost consequence, and the output cache.** Dropping relink means every
+variant is once again its own full corpus compile — substantially more
+expensive than design 2's "compile once per combo" model. This is
+mitigated by an output cache keyed on `(file, assigned transform, compile
+flags)`: since `TIGRESS_SEED` is fixed identically for every variant, two
+different variants that happen to land on the same `(file, transform)`
+pair — increasingly likely as the file's 5 possible outcomes get sampled
+across more variants — produce byte-identical output, so the second
+request is served from cache instead of re-running the whole
+prep+Tigress+fixes+compile pipeline. This bounds the campaign's *unique*
+Tigress work at roughly "5 full corpus passes, ever" regardless of how
+many variants are generated, while keeping the combinatorial per-variant
+diversity design 3 is built for. Measured on the real campaign reported
+in `docs/step3_report.md`: a 73.7% cache hit rate across 25 variants.
+Cache entries are published via a same-filesystem `cp`-to-temp-name plus
+atomic `mv`, so a concurrent reader only ever sees a fully-absent or
+fully-complete entry — no lock needed on the read path, and a rare
+concurrent double-miss just costs redundant CPU once, not a correctness
+risk, since the underlying computation is deterministic either way.
 
 ## 7. Known, accepted limitations
 
@@ -207,7 +248,7 @@ scale to large variant counts (relinking).
   functions are not currently marked hidden/internal, so they leak into
   the shared library's public dynamic symbol table. Not a correctness
   bug (functional tests pass), but a cleanliness gap worth closing before
-  treating this combo as production-final.
+  treating this transform as production-final.
 - **Pure-assembly files are permanently out of reach for this axis.**
   `memcpy`/`memset`/`memmove` and other hot-path string functions are
   hand-written x86-64 assembly on this architecture, not C — no
