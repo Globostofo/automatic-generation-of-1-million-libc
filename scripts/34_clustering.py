@@ -17,12 +17,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 from scipy.spatial.distance import squareform
-from tools import RESULTS_DIR, get_variant_ids
+from tools import RESULTS_DIR
 
 
 def load_matrix(path):
-    """Load a distance matrix from a CSV file."""
-    return np.loadtxt(path, delimiter=",", comments="#")
+    """Load a distance matrix and its variant IDs from a CSV file.
+
+    Variant IDs come from the file's own header row (written by
+    save_matrix() in tools.py, used by 31_/32_/33_), not from re-scanning
+    variants/ -- the matrix may only cover a SAMPLE of what's currently on
+    disk (see 32_jaccard_distances.py's sample_size), so independently
+    re-deriving IDs would silently misalign labels with the matrix's actual
+    rows/columns whenever variants/ doesn't exactly match what the matrix
+    was built from.
+    """
+    matrix = np.loadtxt(path, delimiter=",", comments="#")
+    with open(path) as f:
+        header = f.readline().lstrip("#").strip()
+    variant_ids = header.split(",")
+    if len(variant_ids) != matrix.shape[0]:
+        raise ValueError(
+            f"Matrix has {matrix.shape[0]} rows but header lists {len(variant_ids)} "
+            f"variant IDs -- {path} looks malformed or was hand-edited."
+        )
+    return matrix, variant_ids
 
 
 def cluster(matrix, variant_ids, method="average"):
@@ -118,8 +136,7 @@ if __name__ == "__main__":
     name = os.path.basename(matrix_path).replace("_matrix.csv", "")
 
     print(f"=== Loading matrix from {matrix_path} ===")
-    matrix = load_matrix(matrix_path)
-    variant_ids = get_variant_ids()
+    matrix, variant_ids = load_matrix(matrix_path)
     print(f"Loaded {len(variant_ids)} variants")
 
     print("\n=== Clustering ===")
