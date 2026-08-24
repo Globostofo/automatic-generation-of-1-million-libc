@@ -142,9 +142,25 @@ done
 echo "combo_id seed_index assignment_seed cflags" > "$COMBOS_MANIFEST"
 echo "variant_id combo_id relink_seed" > "$MANIFEST"
 
-# --- Tier 1: obfuscate once per assignment seed. Each 15_ run already uses
+# --- Tier 1: obfuscate once per assignment seed. Each 17_ run already uses
 #     intra-build parallelism (MAKE_JOBS) internally, so only a small number
-#     of seeds run concurrently to avoid oversubscribing the machine. ---
+#     of seeds run concurrently to avoid oversubscribing the machine.
+#
+#     TIGRESS_BASE_CACHE (the prep cache: reference-compile + preprocess +
+#     stub-main) is SHARED across all N_SEEDS runs -- prep is seed-
+#     independent (only the final transform pick varies by seed), so
+#     without sharing, this work would be redone from scratch once per
+#     seed for no reason. Created fresh here (once per campaign, not
+#     preserved between campaigns) and passed down via the exported env
+#     var; 17_build_source_tigress.sh detects it was supplied externally
+#     and neither wipes it beforehand nor deletes it after each seed's run
+#     -- safe under concurrent seeds since tigress_cc_wrapper.sh's prep
+#     publish is atomic (temp file + same-filesystem mv). ---
+STEP4_PREP_CACHE="$BASE_DIR/tmp/source_tigress_prep_cache"
+rm -rf "$STEP4_PREP_CACHE"
+mkdir -p "$STEP4_PREP_CACHE"
+export TIGRESS_BASE_CACHE="$STEP4_PREP_CACHE"
+
 SEEDS=()
 for (( S = 1; S <= N_SEEDS; S++ )); do
     ASSIGNMENT_SEED=$(( (RANDOM << 16) ^ (RANDOM << 1) ^ RANDOM ))
@@ -158,7 +174,7 @@ SOURCE_PARALLEL_JOBS=$N_SEEDS
 MAKE_JOBS_PER_SEED=$(( $(nproc) / SOURCE_PARALLEL_JOBS ))
 [ "$MAKE_JOBS_PER_SEED" -lt 1 ] && MAKE_JOBS_PER_SEED=1
 
-echo "=== Tier 1: obfuscating $N_SEEDS source corpora ($SOURCE_PARALLEL_JOBS parallel, $MAKE_JOBS_PER_SEED make jobs each) ==="
+echo "=== Tier 1: obfuscating $N_SEEDS source corpora ($SOURCE_PARALLEL_JOBS parallel, $MAKE_JOBS_PER_SEED make jobs each, shared prep cache) ==="
 printf "%s\n" "${SEEDS[@]}" | MAKE_JOBS="$MAKE_JOBS_PER_SEED" \
     xargs -P"$SOURCE_PARALLEL_JOBS" -I{} bash -c '
         bash "'"$SCRIPTS_DIR"'/17_build_source_tigress.sh" "{}"

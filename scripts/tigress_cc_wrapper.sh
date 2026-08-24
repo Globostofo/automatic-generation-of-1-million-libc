@@ -280,9 +280,19 @@ do_prep() {
     #    corrupts global initializers.)
     printf '\nint main(void){return 0;}\n' >> "$WORK/src.fixed.i"
 
+    # Publish atomically (temp file + same-filesystem `mv`), same pattern as
+    # the output cache's publish step below -- with TIGRESS_BASE_CACHE now
+    # shared across concurrently-running processes (e.g. step 4's multiple
+    # Tigress assignment seeds all prepping the same file at once, since
+    # prep is seed-independent), a plain `cp` here could let a concurrent
+    # reader see a partially-written src.fixed.i. src.fixed.i is published
+    # before funcs.txt so a reader that observes a non-empty funcs.txt is
+    # guaranteed src.fixed.i was already fully written.
     mkdir -p "$CACHE"
-    cp "$WORK/src.fixed.i" "$CACHE/src.fixed.i"
-    echo "$FUNCS" > "$CACHE/funcs.txt"
+    TMP_SRC="$CACHE/src.fixed.i.tmp.$$"
+    cp "$WORK/src.fixed.i" "$TMP_SRC" && mv -f "$TMP_SRC" "$CACHE/src.fixed.i"
+    TMP_FUNCS="$CACHE/funcs.txt.tmp.$$"
+    echo "$FUNCS" > "$TMP_FUNCS" && mv -f "$TMP_FUNCS" "$CACHE/funcs.txt"
     return 0
 }
 

@@ -24,6 +24,20 @@
 #              TIGRESS_EXCLUDES     e.g. src/malloc/mallocng/malloc.c, see
 #                                   tigress_cc_wrapper.sh header
 #              MAKE_JOBS            intra-build parallelism (default: nproc)
+#              TIGRESS_BASE_CACHE   prep cache (reference-compile + preprocess
+#                                   + stub-main -- seed-independent, only the
+#                                   final transform pick varies by seed).
+#                                   Default: a private per-seed dir, created
+#                                   and destroyed by this script. Pass a
+#                                   SHARED path (and don't clean it up
+#                                   yourself) to reuse prep work across
+#                                   multiple seeds in one campaign, as
+#                                   19_build_campaign_step4.sh does -- this
+#                                   script never deletes a cache dir it
+#                                   didn't create itself, so it's safe to
+#                                   share and safe under concurrent seeds
+#                                   (tigress_cc_wrapper.sh's prep publish is
+#                                   atomic).
 # =============================================================================
 
 set -e
@@ -50,14 +64,26 @@ export REALCC="${REALCC:-gcc}"
 export TIGRESS_EXTRA_ARGS="${TIGRESS_EXTRA_ARGS:?fill with the tigress flags validated at palier 4, e.g. --Environment=x86_64:Linux:Gcc:4.6}"
 export TIGRESS_EXCLUDES="${TIGRESS_EXCLUDES:-}"
 export TIGRESS_TMP="$BASE_DIR/tmp/source_tigress_${ASSIGNMENT_SEED}_scratch"
-export TIGRESS_BASE_CACHE="$BASE_DIR/tmp/source_tigress_${ASSIGNMENT_SEED}_cache"
+# Own (private) cache by default -- created and destroyed here. If the
+# caller passes a shared TIGRESS_BASE_CACHE instead (e.g. the campaign
+# script, reusing prep work across seeds), this script neither wipes it
+# beforehand nor deletes it afterward -- ownership/lifecycle stays with
+# whoever created it.
+OWN_BASE_CACHE=0
+if [ -z "${TIGRESS_BASE_CACHE:-}" ]; then
+    export TIGRESS_BASE_CACHE="$BASE_DIR/tmp/source_tigress_${ASSIGNMENT_SEED}_cache"
+    OWN_BASE_CACHE=1
+fi
 export TIGRESS_OUTPUT_CACHE=""
 export TIGRESS_OUTPUT_SOURCE_DIR="$SOURCE_DIR"
 export TIGRESS_REPORT="$RESULTS_DIR/source_tigress_$ASSIGNMENT_SEED.tigress_report.txt"
 
 echo "=== Obfuscating source corpus for assignment seed $ASSIGNMENT_SEED ==="
 
-rm -rf "$SOURCE_DIR" "$TIGRESS_TMP" "$TIGRESS_BASE_CACHE" "$BUILD_DIR"
+if [ "$OWN_BASE_CACHE" -eq 1 ]; then
+    rm -rf "$TIGRESS_BASE_CACHE"
+fi
+rm -rf "$SOURCE_DIR" "$TIGRESS_TMP" "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$SOURCE_DIR" "$RESULTS_DIR" "$TIGRESS_TMP" "$TIGRESS_BASE_CACHE"
 : > "$TIGRESS_REPORT"
 
@@ -76,7 +102,8 @@ cp -r "$MUSL_DIR/." "$BUILD_DIR/"
     make -j"$MAKE_JOBS" lib/libc.so >> "$LOG" 2>&1
 )
 
-rm -rf "$BUILD_DIR" "$TIGRESS_TMP" "$TIGRESS_BASE_CACHE"
+rm -rf "$BUILD_DIR" "$TIGRESS_TMP"
+[ "$OWN_BASE_CACHE" -eq 1 ] && rm -rf "$TIGRESS_BASE_CACHE"
 
 OK=$(grep -c '^OK ' "$TIGRESS_REPORT" || true)
 FALLBACK=$(grep -c '^FALLBACK ' "$TIGRESS_REPORT" || true)
