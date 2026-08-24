@@ -4,7 +4,11 @@
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Hierarchical clustering of variants from a distance matrix
-# Usage    : ./scripts/34_clustering.py <matrix.csv>
+# Usage    : ./scripts/34_clustering.py <matrix.csv> [n_clusters]
+#            Add --plain-heatmap to also save an unreordered, no-cluster-
+#            boundary heatmap (natural variant order) -- see
+#            save_plain_heatmap()'s docstring for when this is the more
+#            honest choice than the reordered one.
 # =============================================================================
 
 import os
@@ -71,6 +75,23 @@ def save_reordered_heatmap(matrix, Z, variant_ids, n_clusters, path):
     print(f"Reordered heatmap saved to {path}")
 
 
+def save_plain_heatmap(matrix, path):
+    """Save the distance matrix in natural variant order, unreordered and
+    without cluster boundaries -- useful when clustering doesn't recover
+    any meaningful structure (e.g. a near-uniform distance distribution),
+    where a cluster-reordered view would misleadingly imply grouping that
+    isn't really there."""
+    fig, ax = plt.subplots(figsize=(12, 10))
+    im = ax.imshow(matrix, cmap="viridis", aspect="auto")
+    plt.colorbar(im, ax=ax, label="Distance")
+    ax.set_title("Distance matrix (natural variant order)")
+    ax.set_xlabel("Variant")
+    ax.set_ylabel("Variant")
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    print(f"Plain heatmap saved to {path}")
+
+
 def save_cluster_assignments(Z, variant_ids, n_clusters, path):
     """Save cluster assignments for each variant."""
     labels = fcluster(Z, n_clusters, criterion="maxclust")
@@ -91,7 +112,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     matrix_path = sys.argv[1]
-    n_clusters = int(sys.argv[2]) if len(sys.argv) > 2 else 6
+    plain_heatmap = "--plain-heatmap" in sys.argv
+    positional = [a for a in sys.argv[2:] if not a.startswith("--")]
+    n_clusters = int(positional[0]) if positional else 6
     name = os.path.basename(matrix_path).replace("_matrix.csv", "")
 
     print(f"=== Loading matrix from {matrix_path} ===")
@@ -106,5 +129,7 @@ if __name__ == "__main__":
     save_dendrogram(Z, variant_ids, os.path.join(RESULTS_DIR, f"{name}_dendrogram.png"))
     save_reordered_heatmap(matrix, Z, variant_ids, n_clusters, os.path.join(RESULTS_DIR, f"{name}_reordered_heatmap.png"))
     save_cluster_assignments(Z, variant_ids, n_clusters, os.path.join(RESULTS_DIR, f"{name}_clusters.txt"))
+    if plain_heatmap:
+        save_plain_heatmap(matrix, os.path.join(RESULTS_DIR, f"{name}_plain_heatmap.png"))
 
     print("\n=== Done ===")
