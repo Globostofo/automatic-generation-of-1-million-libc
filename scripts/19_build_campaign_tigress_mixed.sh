@@ -48,8 +48,19 @@ bash "$SCRIPTS_DIR/01_sync_dependencies.sh" musl
 export TIGRESS_EXTRA_ARGS="${TIGRESS_EXTRA_ARGS:?fill with the tigress flags validated at palier 4, e.g. --Environment=x86_64:Linux:Gcc:4.6}"
 export TIGRESS_EXCLUDES="${TIGRESS_EXCLUDES:-}"
 export TIGRESS_BASE_CACHE="${TIGRESS_BASE_CACHE:-$BASE_DIR/tmp/tigress_mixed_cache}"
-rm -rf "$TIGRESS_BASE_CACHE"
+# Shared across every variant in this campaign, deliberately: with only 5
+# possible transforms per file and TIGRESS_SEED fixed, independent variants
+# frequently re-request the same (file, transform) pair by chance -- caching
+# it means the total unique Tigress work across the WHOLE campaign converges
+# to roughly 5 full-corpus passes (at most, one per transform per file),
+# regardless of N, instead of N full passes. Validated locally: two variants
+# sharing a cold-then-warm cache went from 6m06s to 3m04s. Set
+# TIGRESS_OUTPUT_CACHE="" before calling this script to disable if ever
+# needed (e.g. to force independent timing measurements per variant).
+export TIGRESS_OUTPUT_CACHE="${TIGRESS_OUTPUT_CACHE-$BASE_DIR/tmp/tigress_mixed_output_cache}"
+rm -rf "$TIGRESS_BASE_CACHE" "$TIGRESS_OUTPUT_CACHE"
 mkdir -p "$TIGRESS_BASE_CACHE" "$RESULTS_DIR"
+[ -n "$TIGRESS_OUTPUT_CACHE" ] && mkdir -p "$TIGRESS_OUTPUT_CACHE"
 
 MANIFEST="$RESULTS_DIR/tigress_mixed_manifest.txt"
 echo "variant_id assignment_seed" > "$MANIFEST"
@@ -63,7 +74,7 @@ for (( I = 1; I <= N; I++ )); do
 done
 
 echo "=== Building $N variants ==="
-printf "%s\n" "${VARIANT_JOBS[@]}" | MAKE_JOBS="$MAKE_JOBS_PER_VARIANT" TIGRESS_EXTRA_ARGS="$TIGRESS_EXTRA_ARGS" TIGRESS_EXCLUDES="$TIGRESS_EXCLUDES" TIGRESS_BASE_CACHE="$TIGRESS_BASE_CACHE" \
+printf "%s\n" "${VARIANT_JOBS[@]}" | MAKE_JOBS="$MAKE_JOBS_PER_VARIANT" TIGRESS_EXTRA_ARGS="$TIGRESS_EXTRA_ARGS" TIGRESS_EXCLUDES="$TIGRESS_EXCLUDES" TIGRESS_BASE_CACHE="$TIGRESS_BASE_CACHE" TIGRESS_OUTPUT_CACHE="$TIGRESS_OUTPUT_CACHE" \
     xargs -P"$PARALLEL_JOBS" -I{} bash -c '
         IFS="|" read -r SCRIPTS_DIR VARIANT_ID SEED <<< "{}"
         bash "$SCRIPTS_DIR/18_build_variant_tigress_mixed.sh" "$VARIANT_ID" "$SEED"

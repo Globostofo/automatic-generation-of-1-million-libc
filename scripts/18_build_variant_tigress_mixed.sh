@@ -63,6 +63,8 @@ export TIGRESS_EXTRA_ARGS="${TIGRESS_EXTRA_ARGS:?fill with the tigress flags val
 export TIGRESS_EXCLUDES="${TIGRESS_EXCLUDES:-}"
 export TIGRESS_TMP="$BASE_DIR/tmp/tigress_mixed_${VARIANT_ID}_scratch"
 export TIGRESS_BASE_CACHE="${TIGRESS_BASE_CACHE:-$BASE_DIR/tmp/tigress_mixed_cache}"
+export TIGRESS_OUTPUT_CACHE="${TIGRESS_OUTPUT_CACHE-$BASE_DIR/tmp/tigress_mixed_output_cache}"
+[ -n "$TIGRESS_OUTPUT_CACHE" ] && mkdir -p "$TIGRESS_OUTPUT_CACHE"
 export TIGRESS_REPORT="$RESULTS_DIR/$VARIANT_ID.tigress_report.txt"
 MAKE_JOBS="${MAKE_JOBS:-$(nproc)}"
 
