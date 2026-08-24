@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# Script   : 19_build_campaign_tigress_mixed.sh
+# Script   : 16_build_campaign_tigress_mixed.sh
 # Purpose  : Generate N musl variants, each with its own independent
 #            per-file random Tigress transform assignment (see
-#            18_build_variant_tigress_mixed.sh and
+#            15_build_variant_tigress_mixed.sh and
 #            tigress_cc_wrapper.sh's TIGRESS_ASSIGNMENT_SEED). No relink
 #            step -- deliberately, to measure obfuscation's own diversity
 #            contribution in isolation from step 2's layout-randomization
@@ -13,7 +13,7 @@
 #            campaign, so N here should stay an order of magnitude smaller
 #            (tens, not hundreds) unless there is a specific reason to
 #            afford more.
-# Usage    : ./scripts/19_build_campaign_tigress_mixed.sh [N] [parallel_jobs]
+# Usage    : ./scripts/16_build_campaign_tigress_mixed.sh [N] [parallel_jobs]
 # =============================================================================
 
 set -e
@@ -77,7 +77,7 @@ echo "=== Building $N variants ==="
 printf "%s\n" "${VARIANT_JOBS[@]}" | MAKE_JOBS="$MAKE_JOBS_PER_VARIANT" TIGRESS_EXTRA_ARGS="$TIGRESS_EXTRA_ARGS" TIGRESS_EXCLUDES="$TIGRESS_EXCLUDES" TIGRESS_BASE_CACHE="$TIGRESS_BASE_CACHE" TIGRESS_OUTPUT_CACHE="$TIGRESS_OUTPUT_CACHE" \
     xargs -P"$PARALLEL_JOBS" -I{} bash -c '
         IFS="|" read -r SCRIPTS_DIR VARIANT_ID SEED <<< "{}"
-        bash "$SCRIPTS_DIR/18_build_variant_tigress_mixed.sh" "$VARIANT_ID" "$SEED"
+        bash "$SCRIPTS_DIR/15_build_variant_tigress_mixed.sh" "$VARIANT_ID" "$SEED"
     '
 
 echo "=== Done : $N variants generated ==="

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Script   : 18_build_variant_tigress_mixed.sh
+# Script   : 15_build_variant_tigress_mixed.sh
 # Purpose  : Build a single musl variant obfuscated with a per-file random
 #            transform assignment instead of one fixed transform for the
 #            whole corpus. Each eligible .c file independently gets one of
@@ -23,7 +23,7 @@
 #            already caches (reference-compile/preprocess/stub-main),
 #            which still applies here if TIGRESS_BASE_CACHE is shared
 #            across variants (recommended, see the campaign script).
-# Usage    : ./scripts/18_build_variant_tigress_mixed.sh <variant_id> <assignment_seed>
+# Usage    : ./scripts/15_build_variant_tigress_mixed.sh <variant_id> <assignment_seed>
 #            Env vars:
 #              TIGRESS_EXTRA_ARGS   required, e.g. --Environment=x86_64:Linux:Gcc:4.6
 #              TIGRESS_SEED         Tigress's own --Seed=, fixed (default: 1)

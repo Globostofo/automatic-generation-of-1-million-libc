@@ -39,6 +39,40 @@ flags), 0 functional regressions. See `docs/step2_report.md` for the full
 analysis, including why this axis supplies near-unlimited volume while
 step 1's flags remain necessary for diversity depth.
 
+## Step 3: musl + obfuscation
+
+Third generation axis: **obfuscation** via [Tigress](https://tigress.wtf), a
+source-to-source C transform applied before compilation, chosen over OLLVM to
+stay on the existing GCC/musl toolchain. Each eligible `.c` file gets one of 5
+validated transforms (`Flatten`, `Split`, `Flatten,Split`, `Copy`,
+`AntiTaintAnalysis`), assigned independently and deterministically per file,
+seeded per variant — this uses a real combinatorial space instead of a
+handful of discrete transform choices, and was confirmed to produce a genuine
+diversity *continuum* rather than clusters (N=25, mean pairwise Jaccard
+distance 0.36, std 0.017). See `docs/step3_design.md` for the full
+architecture (four systematic correctness fixes needed to make Tigress safe
+on musl, why per-file beats whole-program merging) and `docs/step3_report.md`
+for results.
+
+## Step 4: axis combination (in progress)
+
+Combines all three axes — flags (step 1), layout randomization (step 2), and
+obfuscation (step 3) — into a single pipeline, instead of generating each in
+isolation. Architecture: obfuscate the corpus once per Tigress assignment
+seed (`17_build_source_tigress.sh`, expensive), compile that same obfuscated
+source with each of step 1's *deduplicated* flag combos
+(`18_build_base_step4.sh`, cheap — Tigress only ever sees one reference
+preprocess, so it doesn't need rerunning per flags combo), then relink with
+step 2's layout mechanism (`13_build_variant_random.sh`, reused unchanged,
+near-free). Uses step 1's own deduplicated flags list (248 of 720 combos —
+see Step 1 above) rather than the full grid, since step 1 already showed
+~65% of it produces identical `.text` on plain musl and crossing the whole
+grid against Tigress would mostly re-derive known duplicates. This keeps the
+expensive axis (Tigress) repeated the fewest times while still combining all
+three levers, each independently toggleable in `19_build_campaign_step4.sh`.
+Not yet run at production scale — mechanism validated locally, no report
+yet.
+
 ## Requirements
 
 - `git`, `gcc`, `make`, `binutils` (`objdump`, `objcopy`, `nm`, `file`)
@@ -76,6 +110,12 @@ check it passes `libc-test`. Serves as the comparison baseline for variants.
 | `13_build_variant_random.sh` | Relinks a single variant from an already-built base (see above): generates a linker script placing `.text.*` sections in a random order with random padding gaps (driven by a seed), relinks (guarded by a per-combo `flock` since several variants may share the same base concurrently), installs under `variants/<id>/`. Same `results/<id>.meta.txt` output as `10_build_variant.sh`, plus the alignment/seed parameters. | `./scripts/13_build_variant_random.sh <variant_id> <combo_id> <seed> [pad_min] [pad_max]` |
 | `14_build_campaign_random.sh` | Draws `K` distinct alignment combos and `seeds_per_combo` random seeds per combo, writes `results/random_combos_manifest.txt` and `results/random_manifest.txt`, then runs one job per combo in parallel — each job builds its base (`12_build_base_random.sh`) and relinks all its variants sequentially (`13_build_variant_random.sh`), so a combo that finishes compiling early starts relinking without waiting for the others. | `./scripts/14_build_campaign_random.sh [K] [seeds_per_combo] [parallel_jobs]` |
 | `gen_order_script.py` | Helper used by `13_build_variant_random.sh`: given a list of `.text.*` section names (stdin) and a seed, prints a partial linker script (`SECTIONS { .text : {...} } INSERT AFTER .text;`) with the sections in a random order and random padding gaps between them. Module, not meant to be run standalone. | `readelf -S --wide *.lo \| grep -oP '\.text\.\S+' \| sort -u \| ./scripts/gen_order_script.py <seed> [pad_min] [pad_max]` |
+| `15_build_variant_tigress_mixed.sh` | Step 3. Builds a single variant with a per-file random Tigress transform assignment (via `tigress_cc_wrapper.sh`'s `TIGRESS_ASSIGNMENT_SEED`) — every eligible `.c` file independently gets one of 5 validated transforms. No relink: each variant is its own full corpus compile, isolating obfuscation's own diversity contribution. | `./scripts/15_build_variant_tigress_mixed.sh <variant_id> <assignment_seed>` |
+| `16_build_campaign_tigress_mixed.sh` | Step 3 campaign: builds `N` mixed-assignment variants in parallel, each with its own random assignment seed, sharing a Tigress output cache across the whole campaign (unique work converges toward ~5 full-corpus passes regardless of `N`). | `./scripts/16_build_campaign_tigress_mixed.sh [N] [parallel_jobs]` |
+| `17_build_source_tigress.sh` | Step 4. Obfuscates the whole musl corpus once for a given Tigress assignment seed (per-file mixed transform assignment, see `tigress_cc_wrapper.sh`) and persists the result as a source tree under `tmp/obfuscated_<seed>/`, instead of compiling it — lets the obfuscation axis be crossed against step 1's flags without rerunning Tigress per flags combo. | `./scripts/17_build_source_tigress.sh <assignment_seed>` |
+| `18_build_base_step4.sh` | Step 4. Overlays an obfuscated source tree (from `17_`) onto a fresh musl checkout and compiles it with a given step-1 `CFLAGS` combo (plain compiler, no Tigress involved here), producing `tmp/base_<combo_id>/` + `results/base_<combo_id>.sections.txt` in the same shape as `12_build_base_random.sh`, so `13_build_variant_random.sh` relinks it unchanged. | `./scripts/18_build_base_step4.sh <combo_id> <assignment_seed> <cflags>` |
+| `19_build_campaign_step4.sh` | Step 4 campaign orchestrator: crosses `tigress_seeds` assignment seeds × step 1's *deduplicated* flags list (`results/step1_distinct_flags.txt`, see below — not the full 720-combo grid, most of which is known-redundant) × `relink_seeds_per_base` layout seeds. Runs `17_` once per seed, then one job per (seed, flags combo) pair building its base (`18_`) and relinking all its variants (`13_build_variant_random.sh`, reused unchanged). | `./scripts/19_build_campaign_step4.sh [tigress_seeds] [relink_seeds_per_base] [parallel_jobs]` |
+| `tigress_cc_wrapper.sh` | `CC=` substitute used by steps 3-4's builds: obfuscates each `.c` file via Tigress before compiling (per-file transform assignment, systematic correctness fixes for musl's `[static N]` syntax, `weak_alias` visibility, and static-initializer/constructor timing — see `docs/step3_design.md`), falling back to the original source on any failure. Supports an output cache (keyed by file/transform/flags) and, for step 4, a source-tree dump mode (`TIGRESS_OUTPUT_SOURCE_DIR`) instead of compiling inline. Not meant to be run directly — set as `CC` during `./configure`. | — |
 
 ### 2x — Variant testing
 
@@ -141,6 +181,32 @@ those scripts scan the whole `variants/`/`results/` directories, run
 ```bash
 ./scripts/99_clean_variants.sh
 ./scripts/14_build_campaign_random.sh   # generate variants (layout randomization)
+./scripts/22_test_campaign_parallel.sh
+./scripts/30_deduplicate_variants.sh
+
+./scripts/32_jaccard_distances.py 3
+./scripts/34_clustering.py results/jaccard_n3_matrix.csv
+```
+
+Step 3 (obfuscation) similarly swaps the generation step for
+`16_build_campaign_tigress_mixed.sh` (requires `TIGRESS_EXTRA_ARGS`, e.g.
+`--Environment=x86_64:Linux:Gcc:4.6`); step 4 (axis combination) swaps it for
+`19_build_campaign_step4.sh`, same requirement, plus a one-time prerequisite
+to build `results/step1_distinct_flags.txt` (step 1's deduplicated flags
+list — a real, full-scale 720-variant compile, not something to redo per
+campaign):
+
+```bash
+./scripts/99_clean_variants.sh
+./scripts/11_build_campaign_grid.sh
+./scripts/30_deduplicate_variants.sh
+grep '^KEEP' results/deduplication.txt \
+    | sed -E 's/^KEEP +[0-9]+ +\[(.*)\]$/\1/' \
+    > results/step1_distinct_flags.txt
+
+./scripts/99_clean_variants.sh   # preserves step1_distinct_flags.txt
+TIGRESS_EXTRA_ARGS="--Environment=x86_64:Linux:Gcc:4.6" \
+    ./scripts/19_build_campaign_step4.sh   # generate variants (flags x layout x obfuscation)
 ./scripts/22_test_campaign_parallel.sh
 ./scripts/30_deduplicate_variants.sh
 

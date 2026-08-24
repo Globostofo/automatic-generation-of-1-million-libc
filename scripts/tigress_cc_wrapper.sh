@@ -69,6 +69,19 @@
 #              TIGRESS_EXCLUDES   optional file, one exact source path per
 #                                 line (as it appears in the compile command)
 #                                 to always pass through unobfuscated
+#              TIGRESS_OUTPUT_SOURCE_DIR  optional (step 4 use case). When
+#                                 set, publishes the final SOURCE (the
+#                                 obfuscated+fixed .ctor.c on success, or the
+#                                 untouched original on any fallback) to
+#                                 "$TIGRESS_OUTPUT_SOURCE_DIR/$SRC", mirroring
+#                                 musl's src/ tree -- this is what lets a
+#                                 build be obfuscated ONCE and then recompiled
+#                                 with many different CFLAGS later without
+#                                 rerunning Tigress. Incompatible with
+#                                 TIGRESS_OUTPUT_CACHE (a cache hit skips
+#                                 regenerating the source needed for the
+#                                 dump) -- the wrapper refuses to start if
+#                                 both are set.
 # =============================================================================
 
 set -u
@@ -82,6 +95,12 @@ TIGRESS_BASE_CACHE="${TIGRESS_BASE_CACHE:-/tmp/tigress_base_cache}"
 TIGRESS_OUTPUT_CACHE="${TIGRESS_OUTPUT_CACHE:-}"
 TIGRESS_REPORT="${TIGRESS_REPORT:-$TIGRESS_TMP/report.txt}"
 TIGRESS_EXCLUDES="${TIGRESS_EXCLUDES:-}"
+TIGRESS_OUTPUT_SOURCE_DIR="${TIGRESS_OUTPUT_SOURCE_DIR:-}"
+
+if [ -n "$TIGRESS_OUTPUT_SOURCE_DIR" ] && [ -n "$TIGRESS_OUTPUT_CACHE" ]; then
+    echo "tigress_cc_wrapper.sh: TIGRESS_OUTPUT_SOURCE_DIR and TIGRESS_OUTPUT_CACHE are incompatible -- a cache hit would skip regenerating the source the dump needs. Set only one." >&2
+    exit 1
+fi
 
 mkdir -p "$TIGRESS_TMP" "$TIGRESS_BASE_CACHE"
 [ -n "$TIGRESS_OUTPUT_CACHE" ] && mkdir -p "$TIGRESS_OUTPUT_CACHE"
@@ -138,8 +157,18 @@ log_result() {
     ( flock 9; echo "$1 $SRC $2" >> "$TIGRESS_REPORT" ) 9> "$LOCK"
 }
 
+# Publishes $1 (a file's content) as "$SRC"'s entry in the mirrored source
+# tree, when TIGRESS_OUTPUT_SOURCE_DIR is in use. No-op otherwise.
+dump_source() {
+    [ -z "$TIGRESS_OUTPUT_SOURCE_DIR" ] && return 0
+    DEST="$TIGRESS_OUTPUT_SOURCE_DIR/$SRC"
+    mkdir -p "$(dirname "$DEST")"
+    cp "$1" "$DEST"
+}
+
 fallback() {
     log_result "FALLBACK" "$1"
+    dump_source "$SRC"
     exec "$REALCC" "${ARGS[@]}"
 }
 
@@ -441,6 +470,11 @@ PYEOF
 #    the build actually asked for.
 "$REALCC" "${BASE_ARGS[@]}" -c -o "$OUT" "$WORK/src.ctor.c" 2> "$WORK/final.log" \
     || fallback "final-compile-failed"
+
+# Only dump the obfuscated source once it's proven to actually compile --
+# a failed final compile falls back above (dumping the original instead),
+# so nothing broken ever lands in the mirrored source tree.
+dump_source "$WORK/src.ctor.c"
 
 # Publish to the output cache for future (file, transform) hits, via a
 # same-filesystem `cp` into a per-process-unique temp name followed by an
