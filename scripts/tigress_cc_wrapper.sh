@@ -50,6 +50,19 @@
 #              TIGRESS_PHASE      prep | variant (default: variant)
 #              TIGRESS_BASE_CACHE shared, cross-variant cache dir for the
 #                                 prep step (default: /tmp/tigress_base_cache)
+#              TIGRESS_OUTPUT_CACHE  optional, shared cross-variant cache
+#                                 for the FINAL compiled object, keyed by
+#                                 (file, transform, compile flags). Only
+#                                 useful in TIGRESS_ASSIGNMENT_SEED mode,
+#                                 where independent variants can legitimately
+#                                 re-request the same (file, transform) pair
+#                                 by chance -- since TIGRESS_SEED is fixed
+#                                 across variants, that pair's obfuscated
+#                                 output is byte-identical every time, so
+#                                 the entire prep+Tigress+fix+compile
+#                                 pipeline can be skipped on a cache hit.
+#                                 Unset (default): disabled, no behavior
+#                                 change from before this existed.
 #              TIGRESS_TMP        per-build scratch dir, NOT shared across
 #                                 variants (default: /tmp/tigress_wrap)
 #              TIGRESS_REPORT     coverage log path (default: $TIGRESS_TMP/report.txt)
@@ -66,10 +79,12 @@ TIGRESS_PHASE="${TIGRESS_PHASE:-variant}"
 TIGRESS_SEED="${TIGRESS_SEED:-}"
 TIGRESS_TMP="${TIGRESS_TMP:-/tmp/tigress_wrap}"
 TIGRESS_BASE_CACHE="${TIGRESS_BASE_CACHE:-/tmp/tigress_base_cache}"
+TIGRESS_OUTPUT_CACHE="${TIGRESS_OUTPUT_CACHE:-}"
 TIGRESS_REPORT="${TIGRESS_REPORT:-$TIGRESS_TMP/report.txt}"
 TIGRESS_EXCLUDES="${TIGRESS_EXCLUDES:-}"
 
 mkdir -p "$TIGRESS_TMP" "$TIGRESS_BASE_CACHE"
+[ -n "$TIGRESS_OUTPUT_CACHE" ] && mkdir -p "$TIGRESS_OUTPUT_CACHE"
 
 ARGS=("$@")
 SRC=""
@@ -139,6 +154,68 @@ for ((i = 0; i < ${#ARGS[@]}; i++)); do
     [ "$a" = "$SRC" ] && continue
     BASE_ARGS+=("$a")
 done
+
+# Transform-list determination and the output-cache check both need to
+# happen before any prep/Tigress work, so they're placed here rather than
+# after stage 5 (where a single-fixed-combo build would naturally compute
+# this) -- see the per-file assignment comment below for why.
+TRANSFORM_POOL=("Flatten" "Split" "Flatten,Split" "Copy" "AntiTaintAnalysis")
+if [ -n "${TIGRESS_ASSIGNMENT_SEED:-}" ]; then
+    # Per-file random transform assignment (TIGRESS_ASSIGNMENT_SEED), used
+    # instead of one fixed TIGRESS_TRANSFORM for the whole corpus. Step 2's
+    # layout relink was found to supply all of a K-fixed-combo campaign's
+    # volume/duplication-avoidance on its own (Tigress's own --Seed= does
+    # not change compiled .text bytes for these transforms) -- Tigress's
+    # own measurable diversity contribution was only 5 discrete "shapes"
+    # (one per combo). Assigning a transform independently per FILE instead
+    # of per whole-corpus-build uses a real combinatorial space
+    # (5^(eligible file count)) rather than 5 fixed points, without needing
+    # any new Tigress research: every transform in TRANSFORM_POOL is
+    # already individually validated safe with its own fallback, only the
+    # ASSIGNMENT GRANULARITY changes. Deterministic per (seed, file) pair
+    # via a hash, not pseudo-random state threaded across files, so a given
+    # variant's assignment is reproducible and doesn't depend on build
+    # (parallel) ordering.
+    IDX=$(python3 -c "
+import hashlib, sys
+seed, path, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+h = hashlib.sha256((seed + ':' + path).encode()).hexdigest()
+print(int(h, 16) % n)
+" "$TIGRESS_ASSIGNMENT_SEED" "$SRC" "${#TRANSFORM_POOL[@]}")
+    TRANSFORM_LIST="${TRANSFORM_POOL[$IDX]}"
+else
+    TRANSFORM_LIST="${TIGRESS_TRANSFORM:-Flatten,Split}"
+fi
+
+# --- Output cache: skip prep+Tigress+fixes+compile entirely if this exact
+#     (file, transform, compile-flags) triple was already computed by an
+#     earlier variant. Only meaningful with TIGRESS_ASSIGNMENT_SEED, where
+#     independent variants can legitimately land on the same (file,
+#     transform) pair by chance -- with only 5 possible transforms per
+#     file, that becomes common well before N gets large, and since
+#     TIGRESS_SEED is fixed across all variants, the pair's output is
+#     byte-identical every time. Keyed on BASE_ARGS too (not just file+
+#     transform) so a flag change can never silently serve a stale object
+#     -- cheap to include, removes any risk of that even though every
+#     variant in this campaign currently shares identical BASE_ARGS anyway.
+#     No lock needed for reads: OUT_CACHE_FILE only ever becomes visible
+#     via an atomic same-filesystem `mv` at publish time (see the end of
+#     this script), so it's either fully absent or fully complete, never
+#     seen mid-write. Two variants CAN still race to independently compute
+#     the same miss concurrently -- wasted CPU in that specific case, not
+#     a correctness risk, since the underlying computation is deterministic
+#     and idempotent either way.
+if [ -n "$TIGRESS_OUTPUT_CACHE" ]; then
+    ARGS_HASH=$(printf '%s' "${BASE_ARGS[*]}" | sha256sum | cut -c1-16)
+    TRANSFORM_SLUG="$(echo "$TRANSFORM_LIST" | tr -c 'A-Za-z0-9' '_')"
+    OUT_CACHE_KEY="${SAFE}__${TRANSFORM_SLUG}__${ARGS_HASH}"
+    OUT_CACHE_FILE="$TIGRESS_OUTPUT_CACHE/$OUT_CACHE_KEY.o"
+    if [ -s "$OUT_CACHE_FILE" ]; then
+        cp "$OUT_CACHE_FILE" "$OUT"
+        log_result "OK" "$TRANSFORM_LIST (cached)"
+        exit 0
+    fi
+fi
 
 # --- Prep: reference compile + preprocess + [static N] fix + stub main,
 #     cached under $TIGRESS_BASE_CACHE/$SAFE so every variant build reuses
@@ -235,34 +312,9 @@ fi
 #    --Functions=, never more (more causes a confusing opaque
 #    ERR-BAD-REQUEST,TRANSFORM-MUST-NOT-BE-PRECEDED-BY regardless of which
 #    functions); the stub main is always present and unique, target that.
-#
-# 4c. Per-file random transform assignment (TIGRESS_ASSIGNMENT_SEED), used
-#     instead of one fixed TIGRESS_TRANSFORM for the whole corpus. Step 2's
-#     layout relink was found to supply all of a K-fixed-combo campaign's
-#     volume/duplication-avoidance on its own (Tigress's own --Seed= does
-#     not change compiled .text bytes for these transforms, see the
-#     stage-5 comment above) -- Tigress's own measurable diversity
-#     contribution was only 5 discrete "shapes" (one per combo). Assigning
-#     a transform independently per FILE instead of per whole-corpus-build
-#     uses a real combinatorial space (5^(eligible file count)) rather
-#     than 5 fixed points, without needing any new Tigress research: every
-#     transform in TRANSFORM_POOL is already individually validated safe
-#     with its own fallback, only the ASSIGNMENT GRANULARITY changes.
-#     Deterministic per (seed, file) pair via a hash, not pseudo-random
-#     state threaded across files, so a given variant's assignment is
-#     reproducible and doesn't depend on build (parallel) ordering.
-TRANSFORM_POOL=("Flatten" "Split" "Flatten,Split" "Copy" "AntiTaintAnalysis")
-if [ -n "${TIGRESS_ASSIGNMENT_SEED:-}" ]; then
-    IDX=$(python3 -c "
-import hashlib, sys
-seed, path, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
-h = hashlib.sha256((seed + ':' + path).encode()).hexdigest()
-print(int(h, 16) % n)
-" "$TIGRESS_ASSIGNMENT_SEED" "$SRC" "${#TRANSFORM_POOL[@]}")
-    TRANSFORM_LIST="${TRANSFORM_POOL[$IDX]}"
-else
-    TRANSFORM_LIST="${TIGRESS_TRANSFORM:-Flatten,Split}"
-fi
+#    (TRANSFORM_LIST itself -- either the fixed TIGRESS_TRANSFORM or a
+#    per-file TIGRESS_ASSIGNMENT_SEED-driven pick -- is determined earlier,
+#    right after BASE_ARGS, so the output-cache check above can use it.)
 
 STAGE_IN="$WORK/src.fixed.i"
 STAGE_NUM=0
@@ -384,6 +436,16 @@ PYEOF
 #    the build actually asked for.
 "$REALCC" "${BASE_ARGS[@]}" -c -o "$OUT" "$WORK/src.ctor.c" 2> "$WORK/final.log" \
     || fallback "final-compile-failed"
+
+# Publish to the output cache for future (file, transform) hits, via a
+# same-filesystem `cp` into a per-process-unique temp name followed by an
+# atomic `mv` -- so a concurrent reader (see the check near the top) only
+# ever sees the cache entry fully absent or fully complete, never
+# mid-write, without needing a lock on the read side.
+if [ -n "$TIGRESS_OUTPUT_CACHE" ]; then
+    TMP_CACHE_FILE="$OUT_CACHE_FILE.tmp.$$"
+    cp "$OUT" "$TMP_CACHE_FILE" && mv -f "$TMP_CACHE_FILE" "$OUT_CACHE_FILE"
+fi
 
 if [ -n "${TIGRESS_ASSIGNMENT_SEED:-}" ]; then
     log_result "OK" "$TRANSFORM_LIST"
