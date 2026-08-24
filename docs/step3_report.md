@@ -90,7 +90,7 @@ tests unrelated to obfuscation.
 
 ![Hierarchical clustering dendrogram (Jaccard, n=3)](images/step3_jaccard_n3_dendrogram.png)
 
-![Distance matrix reordered by cluster (Jaccard, n=3, n_clusters=5)](images/step3_jaccard_n3_reordered_heatmap.png)
+![Distance matrix, natural variant order (Jaccard, n=3)](images/step3_jaccard_n3_plain_heatmap.png)
 
 | Metric | Value |
 |---|---|
@@ -110,24 +110,28 @@ produces a tight, near-uniform continuum instead (std 0.017 — more than
 13× tighter, with every single pairwise distance falling in a narrow
 0.30–0.41 band regardless of which two variants are compared)**.
 
-The reordered heatmap shows this directly: the earlier K-combo version had
-sharp, visually obvious dark diagonal blocks (near-zero within-combo
-distance) against a bright, clearly different off-diagonal (0.4–0.6,
-between-combo distance) — clusters were unmistakable by eye. Here, the
-`n_clusters=5` boundaries are still drawn (red lines) but are **not
-visually distinguishable by color from the rest of the matrix** — the
-whole matrix is a near-uniform yellow-green. The dendrogram makes the same
-point even more starkly: in the K-combo version, leaf-level merges
-happened at ~0.01–0.02 while the top-level splits happened at ~0.44–0.55,
-a >20× gap that is the signature of genuinely separate families. Here,
-**every merge in the entire tree — from the closest pair of variants to
-the single highest join at the top — falls within the same narrow
-0.30–0.37 band.** There is no meaningful hierarchical structure left to
-find: forcing a cut into 5 clusters (matching the old design's transform
-count, for comparability) produces a partition, but not a *meaningful*
-one — cluster sizes (5, 10, 3, 6, 1) look arbitrary because they are:
-cutting a genuinely flat, structureless distance cloud at any `n_clusters`
-value would produce comparably arbitrary groupings.
+The heatmap above is shown in **natural variant order, deliberately not
+reordered by cluster** — unlike the K-combo report's heatmap. Reordering
+by a forced cluster cut is appropriate when clusters are real (as they
+were there); doing the same here, on a distance distribution this flat,
+would imply a grouping that isn't actually meaningful. The earlier
+K-combo version had sharp, visually obvious dark diagonal blocks
+(near-zero within-combo distance) against a bright, clearly different
+off-diagonal (0.4–0.6, between-combo distance) — clusters were
+unmistakable by eye. Here, in plain variant-ID order with no reordering
+at all, the whole matrix is a near-uniform yellow-green with no pattern
+visible anywhere. The dendrogram makes the same point even more starkly:
+in the K-combo version, leaf-level merges happened at ~0.01–0.02 while the
+top-level splits happened at ~0.44–0.55, a >20× gap that is the signature
+of genuinely separate families. Here, **every merge in the entire tree —
+from the closest pair of variants to the single highest join at the top —
+falls within the same narrow 0.30–0.37 band.** There is no meaningful
+hierarchical structure left to find; a forced cluster cut (attempted at
+`n_clusters=5` for comparability with the old design) produced group
+sizes (5, 10, 3, 6, 1) that looked arbitrary because they are — cutting a
+genuinely flat, structureless distance cloud at any `n_clusters` value
+would produce comparably arbitrary groupings, which is why that cut isn't
+reported here.
 
 ## 3. Analysis and limitations
 
