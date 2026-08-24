@@ -6,14 +6,25 @@
 #            mechanism) for volume. Mirrors 14_build_campaign_random.sh's
 #            "K combos x seeds_per_combo, one job per combo" structure,
 #            swapping alignment flags for Tigress transform combos.
-#            Fixed to 3 known-safe combos validated this session/project
+#            Fixed to 5 known-safe combos validated this session/project
 #            (Flatten alone: palier 3; Split alone: tested locally 2026-08-14;
-#            Flatten+Split: palier 4) -- each is a genuinely different
-#            Tigress transformation, so Tigress actually contributes real
-#            code-level diversity between combos, not just a single fixed
-#            pass; the seed-driven volume within a combo comes from layout
+#            Flatten+Split: palier 4; Copy and AntiTaintAnalysis: tested
+#            locally 2026-08-24) -- each is a genuinely different Tigress
+#            transformation, so Tigress actually contributes real code-level
+#            diversity between combos, not just a single fixed pass; the
+#            seed-driven volume within a combo comes from layout
 #            randomization (Tigress's own --Seed= confirmed not to produce
 #            different .text bytes for these transforms, see 18_'s header).
+#            Other transforms considered and NOT included here: Inline
+#            (disqualified -- silently deletes function bodies, per-file
+#            architecture can't see real cross-file callers), EncodeData
+#            (needs a --GlobalVariables=/--LocalVariables= list the wrapper
+#            doesn't build), AntiAliasAnalysis (breaks the constructor-rename
+#            fix -- embeds a bare `main` identifier reference inside the
+#            renamed function body), RandomizeArgs (would need a
+#            static/hidden-only function filter to avoid breaking musl's
+#            public ABI, not built), Merge (untested, suspected of the same
+#            issue as Inline).
 # Usage    : ./scripts/20_build_campaign_tigress_relink.sh [seeds_per_combo] [parallel_jobs]
 # =============================================================================
 
@@ -26,6 +37,8 @@ COMBOS=(
     "flatten|Flatten"
     "split|Split"
     "flatten_split|Flatten,Split"
+    "copy|Copy"
+    "anti_taint|AntiTaintAnalysis"
 )
 K=${#COMBOS[@]}
 
