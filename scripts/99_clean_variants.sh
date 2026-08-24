@@ -13,8 +13,7 @@ SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
 
 echo "WARNING: This will delete all generated variants and results."
-echo "         The toolchain, test binaries, and step1_distinct_flags.txt"
-echo "         (step 4's deduplicated flags manifest) will be preserved."
+echo "         The toolchain and test binaries will be preserved."
 echo ""
 read -p "Are you sure? [y/N] " confirm
 if [[ "$confirm" != "y" && "$confirm" != "Y" ]]
@@ -25,11 +24,11 @@ fi
 
 for dir in "$RESULTS_DIR" "$VARIANTS_DIR"
 do
-    if [ -z "$(ls -A "$dir" | grep -v '^\.' | grep -v 'toolchain.test.txt' | grep -v 'step1_distinct_flags.txt')" ]
+    if [ -z "$(ls -A "$dir" | grep -v '^\.' | grep -v 'toolchain.test.txt')" ]
     then
         echo "$(basename "$dir")/ already empty"
     else
-        find "$dir" -mindepth 1 ! -name ".gitkeep" ! -name "toolchain.test.txt" ! -name "step1_distinct_flags.txt" -delete
+        find "$dir" -mindepth 1 ! -name ".gitkeep" ! -name "toolchain.test.txt" -delete
         echo "$(basename "$dir")/ cleared"
     fi
 done

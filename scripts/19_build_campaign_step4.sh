@@ -3,9 +3,9 @@
 # Script   : 19_build_campaign_step4.sh
 # Purpose  : Step 4 (axis combination). Generate variants combining all three
 #            generation axes: obfuscation (step 3, per-file mixed Tigress
-#            assignment), compiler flags (step 1's DEDUPLICATED flags list,
-#            see below), and layout randomization (step 2's function-order +
-#            padding relink).
+#            assignment), compiler flags (step 1's flag axes, RANDOMLY
+#            SAMPLED -- see below), and layout randomization (step 2's
+#            function-order + padding relink).
 #
 #            Three-tier pipeline, cheapest tier last, so the one genuinely
 #            expensive axis (Tigress) is repeated the fewest times:
@@ -21,35 +21,31 @@
 #                                    unchanged), several relink seeds per
 #                                    base -> the bulk of the variant volume.
 #
-#            Flags source: step 1's own report found 720 flag combos collapse
-#            to only 248 distinct `.text` hashes on plain musl (~65%
-#            duplication, driven almost entirely by the optimization level --
-#            see docs/step1_report.md). Crossing the full 720 against Tigress
-#            would spend most of tier 2's compute re-deriving combos already
-#            known to produce identical code. Instead this script reads the
-#            already-deduplicated flags list from
-#            "$RESULTS_DIR/step1_distinct_flags.txt" (one CFLAGS string per
-#            line) -- regenerate it once via:
-#              ./scripts/11_build_campaign_grid.sh
-#              ./scripts/30_deduplicate_variants.sh
-#              grep '^KEEP' results/deduplication.txt \
-#                  | sed -E 's/^KEEP +[0-9]+ +\[(.*)\]$/\1/' \
-#                  > results/step1_distinct_flags.txt
-#            (this itself is a real, full-scale 720-variant compile -- same
-#            cost class as step 1's own original campaign, not something to
-#            run casually; 99_clean_variants.sh preserves this file across
-#            campaign cleanups, like it already does for toolchain.test.txt).
-#            Known, accepted approximation: this dedup was measured on plain
-#            (non-obfuscated) musl. Whether the same flag combos collapse to
-#            identical output on Tigress-transformed source is not verified
-#            (re-verifying would require running Tigress on all 720 combos
-#            first -- the exact cost this shortcut exists to avoid) -- worth
-#            a documented limitation in the eventual report, not silently
-#            assumed permanent.
+#            Flags source: a fixed number (flags_combos) of DISTINCT flag
+#            tuples drawn at random from the same 5 axes as step 1's grid
+#            (optimization level x inlining x unrolling x frame pointer x
+#            march/mtune), mirroring how steps 2 and 3 already draw a fixed
+#            N rather than enumerating exhaustively -- step 1 itself is not
+#            touched or depended on here (no prerequisite campaign, no
+#            manifest file to regenerate). Two deliberate consequences of
+#            this choice, both accepted:
+#              - unlike a full-grid crossing, this can't guarantee hitting
+#                every distinct "shape" step 1 found (optimization level
+#                dominates step 1's own clustering -- see
+#                docs/step1_report.md -- so a modest flags_combos should
+#                still cover most of the real diversity in practice, but
+#                this isn't exhaustive by construction);
+#              - some drawn combos may still turn out to produce identical
+#                `.text` once compiled -- this is NOT pre-filtered using step
+#                1's plain-musl duplication numbers (which don't necessarily
+#                transfer to Tigress-obfuscated source, an open question this
+#                design sidesteps rather than assumes); instead
+#                30_deduplicate_variants.sh measures the real duplication
+#                rate on the actual obfuscated+flags output, same as every
+#                other step already does.
 #
-#            Total variants = seeds x len(step1_distinct_flags.txt) x
-#            relink_seeds_per_base.
-# Usage    : ./scripts/19_build_campaign_step4.sh [tigress_seeds] [relink_seeds_per_base] [parallel_jobs]
+#            Total variants = seeds x flags_combos x relink_seeds_per_base.
+# Usage    : ./scripts/19_build_campaign_step4.sh [tigress_seeds] [flags_combos] [relink_seeds_per_base] [parallel_jobs]
 #            Env vars (forwarded to 17_build_source_tigress.sh):
 #              TIGRESS_EXTRA_ARGS   required, e.g. --Environment=x86_64:Linux:Gcc:4.6
 #              TIGRESS_EXCLUDES     e.g. src/malloc/mallocng/malloc.c
@@ -67,17 +63,23 @@ fi
 N_SEEDS="${1:-3}"
 
 if [[ -n "$2" && ! "$2" =~ ^[0-9]+$ ]]; then
-    echo "Invalid number of relink seeds per base : $2"
+    echo "Invalid number of flags combos : $2"
     exit 1
 fi
-RELINK_SEEDS_PER_BASE="${2:-5}"
+N_FLAGS_COMBOS="${2:-250}"
 
-if [ -z "$3" ]; then
+if [[ -n "$3" && ! "$3" =~ ^[0-9]+$ ]]; then
+    echo "Invalid number of relink seeds per base : $3"
+    exit 1
+fi
+RELINK_SEEDS_PER_BASE="${3:-5}"
+
+if [ -z "$4" ]; then
     PARALLEL_JOBS=$(( $(nproc) / 2 ))
-elif [[ "$3" =~ ^[0-9]+$ && "$3" -gt 0 ]]; then
-    PARALLEL_JOBS="$3"
+elif [[ "$4" =~ ^[0-9]+$ && "$4" -gt 0 ]]; then
+    PARALLEL_JOBS="$4"
 else
-    echo "Invalid number of parallel jobs : $3"
+    echo "Invalid number of parallel jobs : $4"
     exit 1
 fi
 [ "$PARALLEL_JOBS" -lt 1 ] && PARALLEL_JOBS=1
@@ -86,19 +88,39 @@ fi
 export TIGRESS_EXTRA_ARGS
 export TIGRESS_EXCLUDES="${TIGRESS_EXCLUDES:-}"
 
-# Flags list: step 1's deduplicated survivors (248 of 720 on plain musl),
-# NOT the full grid -- see the header comment for why and how to regenerate.
-FLAGS_MANIFEST="$RESULTS_DIR/step1_distinct_flags.txt"
-if [ ! -s "$FLAGS_MANIFEST" ]; then
-    echo "[ERROR] $FLAGS_MANIFEST not found or empty."
-    echo "        Regenerate it once (see this script's header comment):"
-    echo "          ./scripts/11_build_campaign_grid.sh"
-    echo "          ./scripts/30_deduplicate_variants.sh"
-    echo "          grep '^KEEP' results/deduplication.txt | sed -E 's/^KEEP +[0-9]+ +\[(.*)\]\$/\1/' > $FLAGS_MANIFEST"
+# Flags list: N_FLAGS_COMBOS DISTINCT tuples drawn at random from step 1's
+# own axes -- not the full 720-combo grid, not a dependency on step 1's own
+# scripts/results. Same distinct-draw pattern as 14_build_campaign_random.sh
+# uses for alignment combos.
+O_LEVELS=("-O0" "-O1" "-O2" "-O3" "-Os" "-Og")
+INLINE_FLAGS=("" "-fno-inline" "-fno-inline-functions" "-finline-functions")
+UNROLL_FLAGS=("" "-fno-unroll-loops" "-funroll-loops")
+FRAME_FLAGS=("" "-fno-omit-frame-pointer")
+MARCH_FLAGS=("" "-march=x86-64" "-march=x86-64-v2" "-march=x86-64-v3" "-mtune=native")
+MAX_FLAGS_COMBOS=$(( ${#O_LEVELS[@]} * ${#INLINE_FLAGS[@]} * ${#UNROLL_FLAGS[@]} * ${#FRAME_FLAGS[@]} * ${#MARCH_FLAGS[@]} ))
+if [ "$N_FLAGS_COMBOS" -gt "$MAX_FLAGS_COMBOS" ]; then
+    echo "[ERROR] flags_combos ($N_FLAGS_COMBOS) exceeds the full grid size ($MAX_FLAGS_COMBOS) -- can't draw that many distinct tuples."
     exit 1
 fi
-mapfile -t FLAGS_LIST < "$FLAGS_MANIFEST"
-N_FLAGS_COMBOS=${#FLAGS_LIST[@]}
+
+declare -A SEEN_FLAGS
+FLAGS_LIST=()
+F=0
+while [ "$F" -lt "$N_FLAGS_COMBOS" ]; do
+    o="${O_LEVELS[$((RANDOM % ${#O_LEVELS[@]}))]}"
+    inline="${INLINE_FLAGS[$((RANDOM % ${#INLINE_FLAGS[@]}))]}"
+    unroll="${UNROLL_FLAGS[$((RANDOM % ${#UNROLL_FLAGS[@]}))]}"
+    frame="${FRAME_FLAGS[$((RANDOM % ${#FRAME_FLAGS[@]}))]}"
+    march="${MARCH_FLAGS[$((RANDOM % ${#MARCH_FLAGS[@]}))]}"
+    KEY="$o|$inline|$unroll|$frame|$march"
+    if [ -n "${SEEN_FLAGS[$KEY]}" ]; then
+        continue
+    fi
+    SEEN_FLAGS[$KEY]=1
+    F=$((F + 1))
+    CFLAGS=$(echo "$o $inline $unroll $frame $march" | tr -s ' ' | sed 's/^ //;s/ $//')
+    FLAGS_LIST+=("$CFLAGS")
+done
 
 N_TOTAL=$((N_SEEDS * N_FLAGS_COMBOS * RELINK_SEEDS_PER_BASE))
 echo "Step 4 campaign: $N_SEEDS tigress seeds x $N_FLAGS_COMBOS flags combos x $RELINK_SEEDS_PER_BASE relink seeds = $N_TOTAL variants"
@@ -109,9 +131,14 @@ bash "$SCRIPTS_DIR/01_sync_dependencies.sh" musl
 
 mkdir -p "$RESULTS_DIR"
 SEEDS_MANIFEST="$RESULTS_DIR/step4_seeds_manifest.txt"
+FLAGS_MANIFEST="$RESULTS_DIR/step4_flags_manifest.txt"
 COMBOS_MANIFEST="$RESULTS_DIR/step4_combos_manifest.txt"
 MANIFEST="$RESULTS_DIR/step4_manifest.txt"
 echo "seed_index assignment_seed" > "$SEEDS_MANIFEST"
+echo "flags_id cflags" > "$FLAGS_MANIFEST"
+for (( F = 1; F <= N_FLAGS_COMBOS; F++ )); do
+    echo "$(printf "%04d" "$F") ${FLAGS_LIST[$((F - 1))]}" >> "$FLAGS_MANIFEST"
+done
 echo "combo_id seed_index assignment_seed cflags" > "$COMBOS_MANIFEST"
 echo "variant_id combo_id relink_seed" > "$MANIFEST"
 
@@ -176,6 +203,7 @@ printf "%s\n" "${COMBO_JOBS[@]}" | xargs -P"$PARALLEL_JOBS" -I{} bash -c '
 
 echo "=== Done : $N_TOTAL variants generated across $((N_SEEDS * N_FLAGS_COMBOS)) bases ==="
 echo "    Seeds manifest    : $SEEDS_MANIFEST"
+echo "    Flags manifest    : $FLAGS_MANIFEST"
 echo "    Combos manifest   : $COMBOS_MANIFEST"
 echo "    Variants manifest : $MANIFEST"
 echo ""
