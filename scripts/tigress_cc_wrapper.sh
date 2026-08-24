@@ -176,12 +176,17 @@ if [ -n "${TIGRESS_ASSIGNMENT_SEED:-}" ]; then
     # via a hash, not pseudo-random state threaded across files, so a given
     # variant's assignment is reproducible and doesn't depend on build
     # (parallel) ordering.
-    IDX=$(python3 -c "
-import hashlib, sys
-seed, path, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
-h = hashlib.sha256((seed + ':' + path).encode()).hexdigest()
-print(int(h, 16) % n)
-" "$TIGRESS_ASSIGNMENT_SEED" "$SRC" "${#TRANSFORM_POOL[@]}")
+    # sha256sum (a small C binary) instead of `python3 -c`: this runs on
+    # EVERY invocation, hit or miss (the output cache key depends on it),
+    # so a full Python interpreter startup here is pure overhead paid
+    # ~1200 times per variant. Measured ~12x faster per call (26ms ->
+    # 2.2ms) switching to this. Only the first 32 bits of the SHA256
+    # digest are used (bash arithmetic is 64-bit signed, can't do the
+    # full 256-bit modulo Python did) -- confirmed by direct measurement
+    # this doesn't meaningfully affect distribution quality (385-421 per
+    # bucket over 2000 synthetic paths across 5 buckets, expected 400).
+    HASH_HEX=$(printf '%s' "${TIGRESS_ASSIGNMENT_SEED}:${SRC}" | sha256sum | cut -c1-8)
+    IDX=$(( 0x$HASH_HEX % ${#TRANSFORM_POOL[@]} ))
     TRANSFORM_LIST="${TRANSFORM_POOL[$IDX]}"
 else
     TRANSFORM_LIST="${TIGRESS_TRANSFORM:-Flatten,Split}"
