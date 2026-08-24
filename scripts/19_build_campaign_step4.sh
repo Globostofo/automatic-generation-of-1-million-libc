@@ -21,6 +21,24 @@
 #                                    unchanged), several relink seeds per
 #                                    base -> the bulk of the variant volume.
 #
+#            Dispatch: each Tigress assignment seed runs its own full
+#            pipeline (tier 1 -> its own tier 2/3) as ONE job, via this same
+#            script self-invoked with --seed-pipeline. Tier 2/3 for a given
+#            seed starts as soon as THAT seed's tier 1 finishes, without
+#            waiting on the other seeds -- mirrors 14_build_campaign_random.sh's
+#            own "a combo that finishes compiling early starts relinking
+#            without waiting for the others" principle, one level up. The
+#            previous design had a hard barrier (ALL seeds' tier 1 had to
+#            finish before ANY tier 2 could start), which cost real wall
+#            time whenever seeds don't finish tier 1 at the same moment.
+#            Accepted tradeoff: core allocation is no longer strictly
+#            phase-separated (a seed still in tier 1 and another already in
+#            tier 2 can be using cores at the same time), so the two
+#            per-phase job counts below are sized as a reasonable split of
+#            the total budget, not a hard guarantee against ever
+#            oversubscribing -- acceptable since tier 2's individual builds
+#            are cheap/short, not a correctness concern either way.
+#
 #            Flags source: a fixed number (flags_combos) of DISTINCT flag
 #            tuples drawn at random from the same 5 axes as step 1's grid
 #            (optimization level x inlining x unrolling x frame pointer x
@@ -55,6 +73,36 @@ set -e
 
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
+
+# --- Internal seed-pipeline mode ------------------------------------------
+# Invoked by this same script's own dispatch loop below (self-invocation),
+# one process per Tigress assignment seed, running concurrently with the
+# other seeds' pipelines. Runs tier 1 for this seed, then immediately
+# dispatches tier 2/3 for exactly this seed's combos (pre-computed by the
+# main invocation into a per-seed job file, same job-string format
+# 14_build_campaign_random.sh's own combo dispatch already established) --
+# removing the barrier a single flat "all tier 1, then all tier 2/3"
+# dispatch would impose.
+if [ "${1:-}" = "--seed-pipeline" ]; then
+    ASSIGNMENT_SEED="$2"
+    COMBO_PARALLEL_PER_SEED="$3"
+    JOBS_FILE="$4"
+
+    bash "$SCRIPTS_DIR/17_build_source_tigress.sh" "$ASSIGNMENT_SEED"
+
+    xargs -P"$COMBO_PARALLEL_PER_SEED" -I{} bash -c '
+        IFS="|" read -r SCRIPTS_DIR COMBO_ID ASSIGNMENT_SEED CFLAGS SEED_LIST <<< "{}"
+        bash "$SCRIPTS_DIR/18_build_base_step4.sh" "$COMBO_ID" "$ASSIGNMENT_SEED" "$CFLAGS"
+        IFS="," read -ra PAIRS <<< "$SEED_LIST"
+        for pair in "${PAIRS[@]}"; do
+            IFS=":" read -r VARIANT_ID RELINK_SEED <<< "$pair"
+            bash "$SCRIPTS_DIR/13_build_variant_random.sh" "$VARIANT_ID" "$COMBO_ID" "$RELINK_SEED"
+        done
+    ' < "$JOBS_FILE"
+
+    exit 0
+fi
+# ---------------------------------------------------------------------------
 
 if [[ -n "$1" && ! "$1" =~ ^[0-9]+$ ]]; then
     echo "Invalid number of tigress seeds : $1"
@@ -142,52 +190,29 @@ done
 echo "combo_id seed_index assignment_seed cflags" > "$COMBOS_MANIFEST"
 echo "variant_id combo_id relink_seed" > "$MANIFEST"
 
-# --- Tier 1: obfuscate once per assignment seed. Each 17_ run already uses
-#     intra-build parallelism (MAKE_JOBS) internally, so only a small number
-#     of seeds run concurrently to avoid oversubscribing the machine.
-#
-#     TIGRESS_BASE_CACHE (the prep cache: reference-compile + preprocess +
-#     stub-main) is SHARED across all N_SEEDS runs -- prep is seed-
-#     independent (only the final transform pick varies by seed), so
-#     without sharing, this work would be redone from scratch once per
-#     seed for no reason. Created fresh here (once per campaign, not
-#     preserved between campaigns) and passed down via the exported env
-#     var; 17_build_source_tigress.sh detects it was supplied externally
-#     and neither wipes it beforehand nor deletes it after each seed's run
-#     -- safe under concurrent seeds since tigress_cc_wrapper.sh's prep
-#     publish is atomic (temp file + same-filesystem mv). ---
+# Shared Tigress prep cache (reference-compile + preprocess + stub-main) --
+# seed-independent (only the final transform pick varies by seed), so
+# sharing it across every seed-pipeline avoids redoing this work once per
+# seed. Created fresh per campaign run.
 STEP4_PREP_CACHE="$BASE_DIR/tmp/source_tigress_prep_cache"
 rm -rf "$STEP4_PREP_CACHE"
 mkdir -p "$STEP4_PREP_CACHE"
 export TIGRESS_BASE_CACHE="$STEP4_PREP_CACHE"
 
+SEED_JOBS_DIR="$BASE_DIR/tmp/step4_seed_jobs"
+rm -rf "$SEED_JOBS_DIR"
+mkdir -p "$SEED_JOBS_DIR"
+
 SEEDS=()
+SEED_PIPELINE_ARGS=()
+VARIANT_COUNTER=0
 for (( S = 1; S <= N_SEEDS; S++ )); do
     ASSIGNMENT_SEED=$(( (RANDOM << 16) ^ (RANDOM << 1) ^ RANDOM ))
     SEEDS+=("$ASSIGNMENT_SEED")
     echo "$S $ASSIGNMENT_SEED" >> "$SEEDS_MANIFEST"
-done
 
-SOURCE_PARALLEL_JOBS=$N_SEEDS
-[ "$SOURCE_PARALLEL_JOBS" -gt "$PARALLEL_JOBS" ] && SOURCE_PARALLEL_JOBS=$PARALLEL_JOBS
-[ "$SOURCE_PARALLEL_JOBS" -lt 1 ] && SOURCE_PARALLEL_JOBS=1
-MAKE_JOBS_PER_SEED=$(( $(nproc) / SOURCE_PARALLEL_JOBS ))
-[ "$MAKE_JOBS_PER_SEED" -lt 1 ] && MAKE_JOBS_PER_SEED=1
-
-echo "=== Tier 1: obfuscating $N_SEEDS source corpora ($SOURCE_PARALLEL_JOBS parallel, $MAKE_JOBS_PER_SEED make jobs each, shared prep cache) ==="
-printf "%s\n" "${SEEDS[@]}" | MAKE_JOBS="$MAKE_JOBS_PER_SEED" \
-    xargs -P"$SOURCE_PARALLEL_JOBS" -I{} bash -c '
-        bash "'"$SCRIPTS_DIR"'/17_build_source_tigress.sh" "{}"
-    '
-
-# --- Tiers 2+3: one job per (seed, flags combo) pair -- builds the base
-#     then relinks all its variants, mirroring 14_build_campaign_random.sh's
-#     "one job per combo" pattern so a combo that finishes compiling early
-#     starts relinking immediately instead of waiting on the others. ---
-COMBO_JOBS=()
-VARIANT_COUNTER=0
-for (( S = 1; S <= N_SEEDS; S++ )); do
-    ASSIGNMENT_SEED="${SEEDS[$((S - 1))]}"
+    JOBS_FILE="$SEED_JOBS_DIR/$S.txt"
+    : > "$JOBS_FILE"
     for (( F = 1; F <= N_FLAGS_COMBOS; F++ )); do
         FLAGS_ID=$(printf "%04d" "$F")
         CFLAGS="${FLAGS_LIST[$((F - 1))]}"
@@ -202,20 +227,32 @@ for (( S = 1; S <= N_SEEDS; S++ )); do
             echo "$VARIANT_ID $COMBO_ID $RELINK_SEED" >> "$MANIFEST"
             SEED_LIST="$SEED_LIST${SEED_LIST:+,}$VARIANT_ID:$RELINK_SEED"
         done
-        COMBO_JOBS+=("$SCRIPTS_DIR|$COMBO_ID|$ASSIGNMENT_SEED|$CFLAGS|$SEED_LIST")
+        echo "$SCRIPTS_DIR|$COMBO_ID|$ASSIGNMENT_SEED|$CFLAGS|$SEED_LIST" >> "$JOBS_FILE"
     done
+    SEED_PIPELINE_ARGS+=("$ASSIGNMENT_SEED|$JOBS_FILE")
 done
 
-echo "=== Tiers 2+3: building $((N_SEEDS * N_FLAGS_COMBOS)) bases and relinking $N_TOTAL variants ==="
-printf "%s\n" "${COMBO_JOBS[@]}" | xargs -P"$PARALLEL_JOBS" -I{} bash -c '
-    IFS="|" read -r SCRIPTS_DIR COMBO_ID ASSIGNMENT_SEED CFLAGS SEED_LIST <<< "{}"
-    bash "$SCRIPTS_DIR/18_build_base_step4.sh" "$COMBO_ID" "$ASSIGNMENT_SEED" "$CFLAGS"
-    IFS="," read -ra PAIRS <<< "$SEED_LIST"
-    for pair in "${PAIRS[@]}"; do
-        IFS=":" read -r VARIANT_ID RELINK_SEED <<< "$pair"
-        bash "$SCRIPTS_DIR/13_build_variant_random.sh" "$VARIANT_ID" "$COMBO_ID" "$RELINK_SEED"
-    done
-'
+# Split the total job budget between how many seed-pipelines run at once
+# and how much fan-out each pipeline gets for its own tier 2/3 once it gets
+# there -- see the header comment for why this is a reasonable split, not
+# a hard oversubscription guarantee now that phases can interleave across
+# seeds.
+SEED_PARALLEL_JOBS=$N_SEEDS
+[ "$SEED_PARALLEL_JOBS" -gt "$PARALLEL_JOBS" ] && SEED_PARALLEL_JOBS=$PARALLEL_JOBS
+[ "$SEED_PARALLEL_JOBS" -lt 1 ] && SEED_PARALLEL_JOBS=1
+MAKE_JOBS_PER_SEED=$(( $(nproc) / SEED_PARALLEL_JOBS ))
+[ "$MAKE_JOBS_PER_SEED" -lt 1 ] && MAKE_JOBS_PER_SEED=1
+COMBO_PARALLEL_PER_SEED=$(( PARALLEL_JOBS / SEED_PARALLEL_JOBS ))
+[ "$COMBO_PARALLEL_PER_SEED" -lt 1 ] && COMBO_PARALLEL_PER_SEED=1
+
+echo "=== Dispatching $N_SEEDS seed pipelines ($SEED_PARALLEL_JOBS parallel, $MAKE_JOBS_PER_SEED make jobs each for tier 1, $COMBO_PARALLEL_PER_SEED parallel tier 2/3 builds per seed) ==="
+printf "%s\n" "${SEED_PIPELINE_ARGS[@]}" | MAKE_JOBS="$MAKE_JOBS_PER_SEED" \
+    xargs -P"$SEED_PARALLEL_JOBS" -I{} bash -c '
+        IFS="|" read -r ASSIGNMENT_SEED JOBS_FILE <<< "{}"
+        bash "'"$SCRIPTS_DIR"'/19_build_campaign_step4.sh" --seed-pipeline "$ASSIGNMENT_SEED" "'"$COMBO_PARALLEL_PER_SEED"'" "$JOBS_FILE"
+    '
+
+rm -rf "$SEED_JOBS_DIR"
 
 echo "=== Done : $N_TOTAL variants generated across $((N_SEEDS * N_FLAGS_COMBOS)) bases ==="
 echo "    Seeds manifest    : $SEEDS_MANIFEST"
