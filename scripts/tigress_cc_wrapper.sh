@@ -235,7 +235,34 @@ fi
 #    --Functions=, never more (more causes a confusing opaque
 #    ERR-BAD-REQUEST,TRANSFORM-MUST-NOT-BE-PRECEDED-BY regardless of which
 #    functions); the stub main is always present and unique, target that.
-TRANSFORM_LIST="${TIGRESS_TRANSFORM:-Flatten,Split}"
+#
+# 4c. Per-file random transform assignment (TIGRESS_ASSIGNMENT_SEED), used
+#     instead of one fixed TIGRESS_TRANSFORM for the whole corpus. Step 2's
+#     layout relink was found to supply all of a K-fixed-combo campaign's
+#     volume/duplication-avoidance on its own (Tigress's own --Seed= does
+#     not change compiled .text bytes for these transforms, see the
+#     stage-5 comment above) -- Tigress's own measurable diversity
+#     contribution was only 5 discrete "shapes" (one per combo). Assigning
+#     a transform independently per FILE instead of per whole-corpus-build
+#     uses a real combinatorial space (5^(eligible file count)) rather
+#     than 5 fixed points, without needing any new Tigress research: every
+#     transform in TRANSFORM_POOL is already individually validated safe
+#     with its own fallback, only the ASSIGNMENT GRANULARITY changes.
+#     Deterministic per (seed, file) pair via a hash, not pseudo-random
+#     state threaded across files, so a given variant's assignment is
+#     reproducible and doesn't depend on build (parallel) ordering.
+TRANSFORM_POOL=("Flatten" "Split" "Flatten,Split" "Copy" "AntiTaintAnalysis")
+if [ -n "${TIGRESS_ASSIGNMENT_SEED:-}" ]; then
+    IDX=$(python3 -c "
+import hashlib, sys
+seed, path, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+h = hashlib.sha256((seed + ':' + path).encode()).hexdigest()
+print(int(h, 16) % n)
+" "$TIGRESS_ASSIGNMENT_SEED" "$SRC" "${#TRANSFORM_POOL[@]}")
+    TRANSFORM_LIST="${TRANSFORM_POOL[$IDX]}"
+else
+    TRANSFORM_LIST="${TIGRESS_TRANSFORM:-Flatten,Split}"
+fi
 
 STAGE_IN="$WORK/src.fixed.i"
 STAGE_NUM=0
@@ -250,6 +277,7 @@ if [ "${TIGRESS_USE_INIT_OPAQUE:-0}" = "1" ]; then
 else
     : > "$WORK/tigress.log"
 fi
+[ -n "${TIGRESS_ASSIGNMENT_SEED:-}" ] && echo "assigned-transform: $TRANSFORM_LIST" >> "$WORK/tigress.log"
 
 IFS=',' read -ra STAGES <<< "$TRANSFORM_LIST"
 for t in "${STAGES[@]}"; do
@@ -357,4 +385,8 @@ PYEOF
 "$REALCC" "${BASE_ARGS[@]}" -c -o "$OUT" "$WORK/src.ctor.c" 2> "$WORK/final.log" \
     || fallback "final-compile-failed"
 
-log_result "OK" "-"
+if [ -n "${TIGRESS_ASSIGNMENT_SEED:-}" ]; then
+    log_result "OK" "$TRANSFORM_LIST"
+else
+    log_result "OK" "-"
+fi
