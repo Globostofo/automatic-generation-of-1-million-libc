@@ -4,15 +4,24 @@
 # Author   : Romain CLEMENT <romain.clement2301@gmail.com>
 # Date     : 2026
 # Purpose  : Compute pairwise Jaccard distances between variants
-# Usage    : ./scripts/32_jaccard_distances.py [n]
+# Usage    : ./scripts/32_jaccard_distances.py [n] [sample_size]
+#            sample_size (optional): if fewer than this many variants are
+#            present, all of them are used; otherwise sample_size are drawn
+#            uniformly at random without replacement. Pairwise cost is
+#            O(n^2), so campaigns with thousands of variants (e.g. step 4)
+#            need this to stay affordable -- the README's own guidance is
+#            to keep this in the "a few hundred" range. The sampled IDs are
+#            written to results/jaccard_n<n>_sample.txt for reproducibility.
 # =============================================================================
 
 import os
+import random
 import sys
 import numpy as np
 from tools import VARIANTS_DIR, RESULTS_DIR, get_variant_ids, extract_mnemonics, save_stats, save_heatmap, save_matrix
 
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+SAMPLE_SIZE = int(sys.argv[2]) if len(sys.argv) > 2 else None
 
 
 def build_ngrams(mnemonics, n):
@@ -59,6 +68,14 @@ def compute_distance_matrix(variants):
 if __name__ == "__main__":
     print(f"=== Loading variants (n-gram size: {N}) ===")
     variant_ids = get_variant_ids()
+
+    if SAMPLE_SIZE is not None and SAMPLE_SIZE < len(variant_ids):
+        variant_ids = sorted(random.sample(variant_ids, SAMPLE_SIZE))
+        sample_path = os.path.join(RESULTS_DIR, f"jaccard_n{N}_sample.txt")
+        with open(sample_path, "w") as f:
+            f.write("\n".join(variant_ids) + "\n")
+        print(f"Sampled {SAMPLE_SIZE} variants (of a larger pool) -- list saved to {sample_path}")
+
     variants = load_variants(variant_ids)
     print(f"Loaded {len(variants)} variants")
 
