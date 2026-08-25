@@ -98,6 +98,14 @@ if [ "${1:-}" = "--seed-pipeline" ]; then
             IFS=":" read -r VARIANT_ID RELINK_SEED <<< "$pair"
             bash "$SCRIPTS_DIR/13_build_variant_random.sh" "$VARIANT_ID" "$COMBO_ID" "$RELINK_SEED"
         done
+        # This combo will never be revisited (each combo is built and
+        # relinked exactly once per campaign) -- free its base right away
+        # instead of letting it sit in tmp/ until 99_clean_variants.sh runs
+        # at the very end. At the default scale (750 bases, each a full
+        # musl build dir with .o files + install/) this is the difference
+        # between tmp/ staying bounded to whatever is actively in flight
+        # vs. accumulating every base the whole campaign ever built.
+        rm -rf "'"$BASE_DIR"'/tmp/base_$COMBO_ID"
     ' < "$JOBS_FILE"
 
     exit 0
