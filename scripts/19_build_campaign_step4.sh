@@ -207,6 +207,18 @@ rm -rf "$STEP4_PREP_CACHE"
 mkdir -p "$STEP4_PREP_CACHE"
 export TIGRESS_BASE_CACHE="$STEP4_PREP_CACHE"
 
+# Shared Tigress SOURCE cache (the obfuscated .c after the Tigress
+# transform + constructor/weak_alias fixes, keyed by file+transform+flags)
+# -- unlike the prep cache above, this covers the genuinely expensive part
+# of tier 1 (the actual Tigress invocation), making additional seeds
+# degressive: with only 5 possible transforms per file, a later seed
+# increasingly re-hits (file, transform) pairs an earlier seed in this
+# same campaign already computed.
+STEP4_SOURCE_CACHE="$BASE_DIR/tmp/source_tigress_source_cache"
+rm -rf "$STEP4_SOURCE_CACHE"
+mkdir -p "$STEP4_SOURCE_CACHE"
+export TIGRESS_SOURCE_CACHE="$STEP4_SOURCE_CACHE"
+
 SEED_JOBS_DIR="$BASE_DIR/tmp/step4_seed_jobs"
 rm -rf "$SEED_JOBS_DIR"
 mkdir -p "$SEED_JOBS_DIR"

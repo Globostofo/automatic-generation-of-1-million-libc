@@ -38,6 +38,20 @@
 #                                   share and safe under concurrent seeds
 #                                   (tigress_cc_wrapper.sh's prep publish is
 #                                   atomic).
+#              TIGRESS_SOURCE_CACHE  cache for the actual obfuscated SOURCE
+#                                   (post-Tigress, post-fixes), keyed by
+#                                   (file, transform, flags) -- unlike
+#                                   TIGRESS_BASE_CACHE this covers the
+#                                   genuinely expensive part (the Tigress
+#                                   invocation itself + the constructor/
+#                                   weak_alias fix), making the marginal
+#                                   cost of additional seeds degressive:
+#                                   with only 5 possible transforms per
+#                                   file, a later seed increasingly re-hits
+#                                   (file, transform) pairs an earlier seed
+#                                   already computed. Same
+#                                   private-by-default / shared-if-supplied
+#                                   ownership pattern as TIGRESS_BASE_CACHE.
 # =============================================================================
 
 set -e
@@ -74,6 +88,11 @@ if [ -z "${TIGRESS_BASE_CACHE:-}" ]; then
     export TIGRESS_BASE_CACHE="$BASE_DIR/tmp/source_tigress_${ASSIGNMENT_SEED}_cache"
     OWN_BASE_CACHE=1
 fi
+OWN_SOURCE_CACHE=0
+if [ -z "${TIGRESS_SOURCE_CACHE:-}" ]; then
+    export TIGRESS_SOURCE_CACHE="$BASE_DIR/tmp/source_tigress_${ASSIGNMENT_SEED}_srccache"
+    OWN_SOURCE_CACHE=1
+fi
 export TIGRESS_OUTPUT_CACHE=""
 export TIGRESS_OUTPUT_SOURCE_DIR="$SOURCE_DIR"
 export TIGRESS_REPORT="$RESULTS_DIR/source_tigress_$ASSIGNMENT_SEED.tigress_report.txt"
@@ -83,8 +102,11 @@ echo "=== Obfuscating source corpus for assignment seed $ASSIGNMENT_SEED ==="
 if [ "$OWN_BASE_CACHE" -eq 1 ]; then
     rm -rf "$TIGRESS_BASE_CACHE"
 fi
+if [ "$OWN_SOURCE_CACHE" -eq 1 ]; then
+    rm -rf "$TIGRESS_SOURCE_CACHE"
+fi
 rm -rf "$SOURCE_DIR" "$TIGRESS_TMP" "$BUILD_DIR"
-mkdir -p "$BUILD_DIR" "$SOURCE_DIR" "$RESULTS_DIR" "$TIGRESS_TMP" "$TIGRESS_BASE_CACHE"
+mkdir -p "$BUILD_DIR" "$SOURCE_DIR" "$RESULTS_DIR" "$TIGRESS_TMP" "$TIGRESS_BASE_CACHE" "$TIGRESS_SOURCE_CACHE"
 : > "$TIGRESS_REPORT"
 
 cp -r "$MUSL_DIR/." "$BUILD_DIR/"
@@ -104,6 +126,7 @@ cp -r "$MUSL_DIR/." "$BUILD_DIR/"
 
 rm -rf "$BUILD_DIR" "$TIGRESS_TMP"
 [ "$OWN_BASE_CACHE" -eq 1 ] && rm -rf "$TIGRESS_BASE_CACHE"
+[ "$OWN_SOURCE_CACHE" -eq 1 ] && rm -rf "$TIGRESS_SOURCE_CACHE"
 
 OK=$(grep -c '^OK ' "$TIGRESS_REPORT" || true)
 FALLBACK=$(grep -c '^FALLBACK ' "$TIGRESS_REPORT" || true)

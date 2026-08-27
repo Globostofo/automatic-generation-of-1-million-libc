@@ -82,6 +82,29 @@
 #                                 regenerating the source needed for the
 #                                 dump) -- the wrapper refuses to start if
 #                                 both are set.
+#              TIGRESS_SOURCE_CACHE  optional, shared cross-seed cache for
+#                                 the OBFUSCATED SOURCE (the .ctor.c after
+#                                 the weak_alias/constructor fixes), keyed
+#                                 by (file, transform, compile flags) same
+#                                 as TIGRESS_OUTPUT_CACHE -- but caching the
+#                                 pre-compile SOURCE instead of a compiled
+#                                 object, so it works together with
+#                                 TIGRESS_OUTPUT_SOURCE_DIR (unlike
+#                                 TIGRESS_OUTPUT_CACHE). With only 5
+#                                 possible transforms per file
+#                                 (TIGRESS_ASSIGNMENT_SEED mode), this makes
+#                                 the cost of additional Tigress assignment
+#                                 seeds degressive: the actually-expensive
+#                                 part (the tigress invocation + the
+#                                 constructor/weak_alias fix), not just the
+#                                 seed-independent prep step, gets skipped
+#                                 whenever an earlier seed already computed
+#                                 the same (file, transform) pair. The final
+#                                 compile step still always runs (it's not
+#                                 cached here, since it genuinely depends on
+#                                 compile flags). Unset (default): disabled,
+#                                 no behavior change from before this
+#                                 existed.
 # =============================================================================
 
 set -u
@@ -96,6 +119,7 @@ TIGRESS_OUTPUT_CACHE="${TIGRESS_OUTPUT_CACHE:-}"
 TIGRESS_REPORT="${TIGRESS_REPORT:-$TIGRESS_TMP/report.txt}"
 TIGRESS_EXCLUDES="${TIGRESS_EXCLUDES:-}"
 TIGRESS_OUTPUT_SOURCE_DIR="${TIGRESS_OUTPUT_SOURCE_DIR:-}"
+TIGRESS_SOURCE_CACHE="${TIGRESS_SOURCE_CACHE:-}"
 
 if [ -n "$TIGRESS_OUTPUT_SOURCE_DIR" ] && [ -n "$TIGRESS_OUTPUT_CACHE" ]; then
     echo "tigress_cc_wrapper.sh: TIGRESS_OUTPUT_SOURCE_DIR and TIGRESS_OUTPUT_CACHE are incompatible -- a cache hit would skip regenerating the source the dump needs. Set only one." >&2
@@ -104,6 +128,7 @@ fi
 
 mkdir -p "$TIGRESS_TMP" "$TIGRESS_BASE_CACHE"
 [ -n "$TIGRESS_OUTPUT_CACHE" ] && mkdir -p "$TIGRESS_OUTPUT_CACHE"
+[ -n "$TIGRESS_SOURCE_CACHE" ] && mkdir -p "$TIGRESS_SOURCE_CACHE"
 
 ARGS=("$@")
 SRC=""
@@ -221,6 +246,11 @@ else
     TRANSFORM_LIST="${TIGRESS_TRANSFORM:-Flatten,Split}"
 fi
 
+# Shared by both caches below -- computed once regardless of which (if any)
+# cache is enabled.
+ARGS_HASH=$(printf '%s' "${BASE_ARGS[*]}" | sha256sum | cut -c1-16)
+TRANSFORM_SLUG="$(echo "$TRANSFORM_LIST" | tr -c 'A-Za-z0-9' '_')"
+
 # --- Output cache: skip prep+Tigress+fixes+compile entirely if this exact
 #     (file, transform, compile-flags) triple was already computed by an
 #     earlier variant. Only meaningful with TIGRESS_ASSIGNMENT_SEED, where
@@ -240,14 +270,31 @@ fi
 #     a correctness risk, since the underlying computation is deterministic
 #     and idempotent either way.
 if [ -n "$TIGRESS_OUTPUT_CACHE" ]; then
-    ARGS_HASH=$(printf '%s' "${BASE_ARGS[*]}" | sha256sum | cut -c1-16)
-    TRANSFORM_SLUG="$(echo "$TRANSFORM_LIST" | tr -c 'A-Za-z0-9' '_')"
     OUT_CACHE_KEY="${SAFE}__${TRANSFORM_SLUG}__${ARGS_HASH}"
     OUT_CACHE_FILE="$TIGRESS_OUTPUT_CACHE/$OUT_CACHE_KEY.o"
     if [ -s "$OUT_CACHE_FILE" ]; then
         cp "$OUT_CACHE_FILE" "$OUT"
         log_result "OK" "$TRANSFORM_LIST (cached)"
         exit 0
+    fi
+fi
+
+# --- Source cache: same idea as the output cache above, but caching the
+#     pre-compile SOURCE (post-Tigress, post-fixes) instead of a compiled
+#     object -- skips prep+Tigress+fixes on a hit but still always runs a
+#     fresh final compile, so it works together with
+#     TIGRESS_OUTPUT_SOURCE_DIR (step 4's use case), unlike the output
+#     cache above. Only active outside TIGRESS_PHASE=prep, which compiles
+#     the unobfuscated original unconditionally and has no notion of a
+#     transform result to look up. Same atomic-publish-at-the-end / no-
+#     lock-on-read reasoning as the output cache.
+SOURCE_CACHE_HIT=0
+if [ -n "$TIGRESS_SOURCE_CACHE" ] && [ "$TIGRESS_PHASE" != "prep" ]; then
+    SRC_CACHE_KEY="${SAFE}__${TRANSFORM_SLUG}__${ARGS_HASH}"
+    SRC_CACHE_FILE="$TIGRESS_SOURCE_CACHE/$SRC_CACHE_KEY.c"
+    if [ -s "$SRC_CACHE_FILE" ]; then
+        cp "$SRC_CACHE_FILE" "$WORK/src.ctor.c"
+        SOURCE_CACHE_HIT=1
     fi
 fi
 
@@ -313,6 +360,12 @@ if [ "$TIGRESS_PHASE" = "prep" ]; then
     # warming the cache for every file in one pass.
     exec "$REALCC" "${BASE_ARGS[@]}" -c -o "$OUT" "$SRC"
 fi
+
+# --- Prep, Tigress invocation, and the constructor/weak_alias fix are all
+#     skipped entirely on a source-cache hit -- $WORK/src.ctor.c is already
+#     populated with this exact (file, transform, flags) triple's result,
+#     so there's nothing left to do here besides the final compile below. ---
+if [ "$SOURCE_CACHE_HIT" != "1" ]; then
 
 # --- Variant mode: reuse cached prep if present, else do it fresh. ---
 if [ -s "$CACHE/src.fixed.i" ] && [ -s "$CACHE/funcs.txt" ]; then
@@ -476,6 +529,17 @@ PYEOF
 
 [ -s "$WORK/src.ctor.c" ] || fallback "ctor-rename-failed"
 
+# Publish the freshly-computed obfuscated source to the source cache, same
+# atomic temp-file + same-filesystem `mv` pattern as the output cache's own
+# publish step -- so a future seed requesting this exact (file, transform,
+# flags) triple can skip straight to the final compile below.
+if [ -n "$TIGRESS_SOURCE_CACHE" ] && [ "$TIGRESS_PHASE" != "prep" ]; then
+    TMP_SRC_CACHE_FILE="$SRC_CACHE_FILE.tmp.$$"
+    cp "$WORK/src.ctor.c" "$TMP_SRC_CACHE_FILE" && mv -f "$TMP_SRC_CACHE_FILE" "$SRC_CACHE_FILE"
+fi
+
+fi # SOURCE_CACHE_HIT != 1
+
 # 7. Final compile of the obfuscated + fixed source, into the object file
 #    the build actually asked for.
 "$REALCC" "${BASE_ARGS[@]}" -c -o "$OUT" "$WORK/src.ctor.c" 2> "$WORK/final.log" \
@@ -496,8 +560,10 @@ if [ -n "$TIGRESS_OUTPUT_CACHE" ]; then
     cp "$OUT" "$TMP_CACHE_FILE" && mv -f "$TMP_CACHE_FILE" "$OUT_CACHE_FILE"
 fi
 
+SOURCE_CACHE_SUFFIX=""
+[ "$SOURCE_CACHE_HIT" = "1" ] && SOURCE_CACHE_SUFFIX=" (source-cached)"
 if [ -n "${TIGRESS_ASSIGNMENT_SEED:-}" ]; then
-    log_result "OK" "$TRANSFORM_LIST"
+    log_result "OK" "$TRANSFORM_LIST$SOURCE_CACHE_SUFFIX"
 else
-    log_result "OK" "-"
+    log_result "OK" "-$SOURCE_CACHE_SUFFIX"
 fi
