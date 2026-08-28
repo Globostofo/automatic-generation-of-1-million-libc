@@ -67,6 +67,13 @@
 #            Env vars (forwarded to 17_build_source_tigress.sh):
 #              TIGRESS_EXTRA_ARGS   required, e.g. --Environment=x86_64:Linux:Gcc:4.6
 #              TIGRESS_EXCLUDES     e.g. src/malloc/mallocng/malloc.c
+#
+#            Progress: the detailed, interleaved per-file/per-variant build
+#            output goes to results/step4_campaign.log instead of the
+#            terminal, which instead shows one compact, self-updating
+#            status line (tier 1/2/3 counts, elapsed, ETA) refreshed every
+#            15s -- tail -f results/step4_campaign.log in another pane for
+#            the raw detail (e.g. to debug a specific failure).
 # =============================================================================
 
 set -e
@@ -270,12 +277,75 @@ MAKE_JOBS_PER_SEED=$(( $(nproc) / SEED_PARALLEL_JOBS ))
 COMBO_PARALLEL_PER_SEED=$(( PARALLEL_JOBS / SEED_PARALLEL_JOBS ))
 [ "$COMBO_PARALLEL_PER_SEED" -lt 1 ] && COMBO_PARALLEL_PER_SEED=1
 
+# --- Progress display ------------------------------------------------------
+# The dispatch below produces a wall of interleaved per-file/per-variant
+# output across potentially thousands of parallel builds -- unreadable at
+# scale and not worth watching live. Detailed output is redirected to
+# CAMPAIGN_LOG instead; a lightweight background monitor polls the
+# filesystem for what's actually finished (each tier writes its own
+# results/*.meta.txt only on success, so counting those files is an
+# accurate, cheap completion signal) and prints one compact, self-
+# overwriting status line to the real terminal every 15s.
+CAMPAIGN_LOG="$RESULTS_DIR/step4_campaign.log"
+: > "$CAMPAIGN_LOG"
+
+format_duration() {
+    local s=$1
+    if [ "$s" -lt 0 ]; then echo "?"; return; fi
+    printf "%dh%02dm" $((s / 3600)) $(((s % 3600) / 60))
+}
+
+progress_monitor() {
+    set +e
+    local start n_bases
+    start=$(date +%s)
+    n_bases=$((N_SEEDS * N_FLAGS_COMBOS))
+    while true; do
+        local seeds_done bases_done variants_done elapsed pct rate remaining eta_sec
+        seeds_done=$(find "$RESULTS_DIR" -maxdepth 1 -name 'source_tigress_*.meta.txt' 2> /dev/null | wc -l)
+        bases_done=$(find "$RESULTS_DIR" -maxdepth 1 -name 'base_*.meta.txt' 2> /dev/null | wc -l)
+        variants_done=$(find "$RESULTS_DIR" -maxdepth 1 -name '[0-9]*.meta.txt' 2> /dev/null | wc -l)
+        elapsed=$(( $(date +%s) - start ))
+        pct=$(awk -v v="$variants_done" -v t="$N_TOTAL" 'BEGIN{printf "%.1f", (t>0)?100*v/t:0}')
+        rate=$(awk -v v="$variants_done" -v e="$elapsed" 'BEGIN{print (e>0)?v/e:0}')
+        if awk -v r="$rate" 'BEGIN{exit !(r>0)}'; then
+            remaining=$((N_TOTAL - variants_done))
+            eta_sec=$(awk -v r="$rate" -v rem="$remaining" 'BEGIN{printf "%d", rem/r}')
+        else
+            eta_sec=-1
+        fi
+        printf "\r\033[K[%s] tier1 %d/%d seeds | tier2 %d/%d bases | tier3 %d/%d variants (%s%%) | elapsed %s | ETA %s" \
+            "$(date +%H:%M:%S)" "$seeds_done" "$N_SEEDS" "$bases_done" "$n_bases" \
+            "$variants_done" "$N_TOTAL" "$pct" "$(format_duration "$elapsed")" "$(format_duration "$eta_sec")"
+        sleep 15
+    done
+}
+
 echo "=== Dispatching $N_SEEDS seed pipelines ($SEED_PARALLEL_JOBS parallel, $MAKE_JOBS_PER_SEED make jobs each for tier 1, $COMBO_PARALLEL_PER_SEED parallel tier 2/3 builds per seed) ==="
-printf "%s\n" "${SEED_PIPELINE_ARGS[@]}" | MAKE_JOBS="$MAKE_JOBS_PER_SEED" \
-    xargs -P"$SEED_PARALLEL_JOBS" -I{} bash -c '
-        IFS="|" read -r ASSIGNMENT_SEED JOBS_FILE <<< "{}"
-        bash "'"$SCRIPTS_DIR"'/19_build_campaign_step4.sh" --seed-pipeline "$ASSIGNMENT_SEED" "'"$COMBO_PARALLEL_PER_SEED"'" "$JOBS_FILE"
-    '
+echo "    Detailed build output -> $CAMPAIGN_LOG"
+progress_monitor &
+MONITOR_PID=$!
+trap 'kill "$MONITOR_PID" 2>/dev/null || true' EXIT
+
+{
+    printf "%s\n" "${SEED_PIPELINE_ARGS[@]}" | MAKE_JOBS="$MAKE_JOBS_PER_SEED" \
+        xargs -P"$SEED_PARALLEL_JOBS" -I{} bash -c '
+            IFS="|" read -r ASSIGNMENT_SEED JOBS_FILE <<< "{}"
+            bash "'"$SCRIPTS_DIR"'/19_build_campaign_step4.sh" --seed-pipeline "$ASSIGNMENT_SEED" "'"$COMBO_PARALLEL_PER_SEED"'" "$JOBS_FILE"
+        '
+} >> "$CAMPAIGN_LOG" 2>&1
+
+kill "$MONITOR_PID" 2> /dev/null || true
+# `|| true` is required: wait on a killed process reports its termination
+# signal as a non-zero exit status, which `set -e` (active for this whole
+# script) would otherwise treat as a fatal error, skipping straight past
+# the "Done" summary below instead of printing it -- caught by a targeted
+# isolated reproduction (a fake 8s dispatch) after the real thing was hard
+# to pin down under a slow/loaded sandbox.
+wait "$MONITOR_PID" 2> /dev/null || true
+trap - EXIT
+printf "\r\033[K"
+# ---------------------------------------------------------------------------
 
 rm -rf "$SEED_JOBS_DIR"
 
