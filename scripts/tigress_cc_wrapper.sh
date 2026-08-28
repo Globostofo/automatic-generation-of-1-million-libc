@@ -85,10 +85,19 @@
 #              TIGRESS_SOURCE_CACHE  optional, shared cross-seed cache for
 #                                 the OBFUSCATED SOURCE (the .ctor.c after
 #                                 the weak_alias/constructor fixes), keyed
-#                                 by (file, transform, compile flags) same
-#                                 as TIGRESS_OUTPUT_CACHE -- but caching the
-#                                 pre-compile SOURCE instead of a compiled
-#                                 object, so it works together with
+#                                 by (file, transform, compile flags,
+#                                 source-content hash) -- the content hash
+#                                 (not just the file's path) is what makes
+#                                 this cache safe to persist ACROSS
+#                                 separate campaign runs, not just within
+#                                 one: if musl's source for that path ever
+#                                 changes (e.g. a submodule update) between
+#                                 two campaigns sharing this cache, the
+#                                 hash differs and it's a clean miss instead
+#                                 of silently serving a stale obfuscated
+#                                 result. Caches the pre-compile SOURCE
+#                                 instead of a compiled object, so it works
+#                                 together with
 #                                 TIGRESS_OUTPUT_SOURCE_DIR (unlike
 #                                 TIGRESS_OUTPUT_CACHE). With only 5
 #                                 possible transforms per file
@@ -288,9 +297,19 @@ fi
 #     the unobfuscated original unconditionally and has no notion of a
 #     transform result to look up. Same atomic-publish-at-the-end / no-
 #     lock-on-read reasoning as the output cache.
+#
+#     Keyed additionally on a hash of $SRC's own CONTENT (not just its
+#     path) -- unlike the output cache, this cache is meant to be reused
+#     across separate campaign runs (persisted, not wiped per campaign),
+#     so a path-only key would silently serve a stale obfuscated result if
+#     musl's source ever changed between campaigns (e.g. a submodule
+#     update) without the cache being cleared. Computed with sha256sum
+#     (not python3) since, like the transform-assignment hash above, this
+#     runs on every invocation, hit or miss.
 SOURCE_CACHE_HIT=0
 if [ -n "$TIGRESS_SOURCE_CACHE" ] && [ "$TIGRESS_PHASE" != "prep" ]; then
-    SRC_CACHE_KEY="${SAFE}__${TRANSFORM_SLUG}__${ARGS_HASH}"
+    SRC_CONTENT_HASH=$(sha256sum "$SRC" | cut -c1-16)
+    SRC_CACHE_KEY="${SAFE}__${TRANSFORM_SLUG}__${ARGS_HASH}__${SRC_CONTENT_HASH}"
     SRC_CACHE_FILE="$TIGRESS_SOURCE_CACHE/$SRC_CACHE_KEY.c"
     if [ -s "$SRC_CACHE_FILE" ]; then
         cp "$SRC_CACHE_FILE" "$WORK/src.ctor.c"

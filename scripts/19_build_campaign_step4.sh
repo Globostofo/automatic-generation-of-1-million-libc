@@ -208,14 +208,19 @@ mkdir -p "$STEP4_PREP_CACHE"
 export TIGRESS_BASE_CACHE="$STEP4_PREP_CACHE"
 
 # Shared Tigress SOURCE cache (the obfuscated .c after the Tigress
-# transform + constructor/weak_alias fixes, keyed by file+transform+flags)
-# -- unlike the prep cache above, this covers the genuinely expensive part
-# of tier 1 (the actual Tigress invocation), making additional seeds
-# degressive: with only 5 possible transforms per file, a later seed
-# increasingly re-hits (file, transform) pairs an earlier seed in this
-# same campaign already computed.
+# transform + constructor/weak_alias fixes, keyed by file+transform+flags+
+# source-content-hash) -- unlike the prep cache above, this covers the
+# genuinely expensive part of tier 1 (the actual Tigress invocation),
+# making additional seeds degressive: with only 5 possible transforms per
+# file, a later seed increasingly re-hits (file, transform) pairs an
+# earlier seed already computed. Deliberately NOT wiped at the start of a
+# campaign (unlike the prep cache) -- the source-content hash in its key
+# makes it safe to persist and reuse ACROSS separate campaign runs, not
+# just within one: a stale entry (e.g. after a musl submodule update)
+# just misses cleanly instead of being served incorrectly. Self-bounding
+# in size regardless (~1200 eligible files x 5 transforms x ~120KB
+# measured, ~720MB ceiling), so leaving it in place indefinitely is safe.
 STEP4_SOURCE_CACHE="$BASE_DIR/tmp/source_tigress_source_cache"
-rm -rf "$STEP4_SOURCE_CACHE"
 mkdir -p "$STEP4_SOURCE_CACHE"
 export TIGRESS_SOURCE_CACHE="$STEP4_SOURCE_CACHE"
 

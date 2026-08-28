@@ -39,8 +39,16 @@ then
     echo "tmp/base_* (step 2/4 base builds) cleared"
 fi
 
-if compgen -G "$BASE_DIR/tmp/obfuscated_*" > /dev/null || compgen -G "$BASE_DIR/tmp/build_source_tigress_*" > /dev/null || compgen -G "$BASE_DIR/tmp/source_tigress_*" > /dev/null
+# tmp/source_tigress_source_cache is deliberately excluded: it's the
+# cross-campaign Tigress SOURCE cache (keyed including a hash of musl's own
+# source content, so a stale entry misses cleanly rather than being served
+# incorrectly) -- meant to persist and keep paying off across separate
+# campaign runs, self-bounding in size (~720MB ceiling) regardless. Every
+# other tmp/source_tigress_* entry (per-seed prep caches/scratch dirs, the
+# shared prep cache) is safe and cheap to rebuild, so still cleared here.
+if compgen -G "$BASE_DIR/tmp/obfuscated_*" > /dev/null || compgen -G "$BASE_DIR/tmp/build_source_tigress_*" > /dev/null || find "$BASE_DIR/tmp" -maxdepth 1 -name 'source_tigress_*' ! -name 'source_tigress_source_cache' -print -quit 2> /dev/null | grep -q .
 then
-    rm -rf "$BASE_DIR"/tmp/obfuscated_* "$BASE_DIR"/tmp/build_source_tigress_* "$BASE_DIR"/tmp/source_tigress_*
-    echo "tmp/obfuscated_*, tmp/build_source_tigress_*, tmp/source_tigress_* (step 4 obfuscated source trees) cleared"
+    rm -rf "$BASE_DIR"/tmp/obfuscated_* "$BASE_DIR"/tmp/build_source_tigress_*
+    find "$BASE_DIR/tmp" -maxdepth 1 -name 'source_tigress_*' ! -name 'source_tigress_source_cache' -exec rm -rf {} +
+    echo "tmp/obfuscated_*, tmp/build_source_tigress_*, tmp/source_tigress_* (step 4 obfuscated source trees, excluding the persistent cross-campaign source cache) cleared"
 fi
